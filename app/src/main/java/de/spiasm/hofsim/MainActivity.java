@@ -170,10 +170,13 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                     + "🚜 Maschinen: Antippen, dann wählen: Feldarbeit, Verkaufen oder Hinfahren – dann aufs Ziel tippen.\n"
                     + "Du kannst auch direkt auf einem Feld z. B. „Grubbern“ tippen – dann wird automatisch eine freie Maschine geschickt.\n"
                     + "Ein Helfer fährt (20 €/h + Diesel). Traktoren holen sich das passende Gerät am Hof.\n\n"
-                    + "Geräte: Grubber, Sämaschine (Weizen, Mais, Gras), Kartoffel-Legemaschine, Düngerstreuer, Anhänger.\n"
+                    + "Geräte: Grubber, Sämaschine (Weizen, Mais, Gras), Kartoffel-Legemaschine, Düngerstreuer, Kipper – je in mehreren Größen.\n"
+                    + "⚙ Leistungsstufen: Jeder Traktor hat eine Stufe von 1 bis 6, jedes Gerät braucht eine Mindest-Stufe. "
+                    + "Ein kleiner Traktor kann also keinen großen Kipper oder breiten Grubber ziehen. "
+                    + "Die Helfer nehmen automatisch das größte Gerät, das der Traktor schafft.\n"
                     + "Ernten: Weizen = Mähdrescher, Mais & Gras = Feldhäcksler, Kartoffeln = Kartoffelroder.\n"
                     + "Ist der Bunker voll, fährt die Erntemaschine zum Hof und lädt ab.\n\n"
-                    + "💶 Verkaufen: Traktor + Anhänger fährt Ware vom Hof zum Landhandel (Weizen, Kartoffeln) "
+                    + "💶 Verkaufen: Traktor + Kipper fährt Ware vom Hof zum Landhandel (Weizen, Kartoffeln) "
                     + "oder zur Biogasanlage (Mais, Gras). Die Preise schwanken täglich.\n\n"
                     + "🐔 Ställe: Hühner fressen Weizen, Kühe Gras und Mais – aus deinem Lager. Dafür gibt's jeden Tag Geld.\n\n"
                     + "⏩ Zeit: Oben rechts die Geschwindigkeit wählen. Weizen wächst ca. 110 Tage – dafür schnell vorspulen!";
@@ -428,7 +431,11 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         StringBuilder sb = new StringBuilder();
         sb.append("Status: ").append(v.status);
         Game.Tool t = game.tool(v.tool);
-        if (Defs.isTractor(v.type)) sb.append("\nGerät: ").append(t != null ? Defs.T_NAMES[t.type] : "keins");
+        if (v.isTractor()) {
+            sb.append("\nLeistungsstufe ").append(v.m().level).append(" • Gerät: ").append(t != null ? t.m().name : "keins");
+        } else {
+            sb.append("\n").append(v.m().info);
+        }
         if (v.load > 0 && v.loadProduct >= 0) {
             sb.append(String.format(Locale.GERMANY, "\nLadung: %.1f t %s", v.load, Defs.PRODUCT_NAMES[v.loadProduct]));
         }
@@ -448,7 +455,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             pickVehicle = v.id;
             showPickHint("Tippe auf das Feld, auf dem " + v.name() + " arbeiten soll.");
         }));
-        if (Defs.isTractor(v.type)) bs.add(button("💰 Ware verkaufen", ORANGE, x -> chooseSell(v)));
+        if (v.isTractor()) bs.add(button("💰 Ware verkaufen", ORANGE, x -> chooseSell(v)));
         bs.add(button("📍 Hinfahren", BLUE, x -> {
             pickMode = PICK_GOTO;
             pickVehicle = v.id;
@@ -562,9 +569,9 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             if (task == Defs.TASK_HARVEST) {
                 int need = Defs.harvesterFor(f.crop);
                 boolean have = false;
-                for (Game.Vehicle c : game.vehicles) if (c.type == need) have = true;
-                if (!have) reason = "Du brauchst einen " + Defs.V_NAMES[need] + " (im Shop kaufen).";
-                else if (reason == null) reason = "Dein " + Defs.V_NAMES[need] + " ist gerade beschäftigt.";
+                for (Game.Vehicle c : game.vehicles) if (c.isHarvester() && c.m().sub == need) have = true;
+                if (!have) reason = "Du brauchst einen " + Defs.H_KIND_NAMES[need] + " (im Shop kaufen).";
+                else if (reason == null) reason = "Dein " + Defs.H_KIND_NAMES[need] + " ist gerade beschäftigt.";
             }
             new AlertDialog.Builder(this).setTitle("Keine Maschine frei")
                     .setMessage(reason != null ? reason : "Gerade ist keine passende Maschine frei.")
@@ -600,7 +607,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         for (int t = 0; t < 4; t++) {
             if (!f.owned || !f.canDo(t)) continue;
             int probeCrop = t == Defs.TASK_SOW ? (v.tool >= 0 && game.tool(v.tool) != null
-                    && game.tool(v.tool).type == Defs.T_PLANTER ? Defs.POTATO : Defs.WHEAT) : Defs.WHEAT;
+                    && game.tool(v.tool).m().sub == Defs.T_PLANTER ? Defs.POTATO : Defs.WHEAT) : Defs.WHEAT;
             String err = game.checkFieldJob(v, f, t, probeCrop);
             if (t == Defs.TASK_SOW && err != null) {
                 String e2 = game.checkFieldJob(v, f, t, Defs.POTATO);
@@ -651,7 +658,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             toast("Dein Lager ist leer.");
             return;
         }
-        new AlertDialog.Builder(this).setTitle("Was verkaufen? (max. 18 t pro Fahrt)")
+        new AlertDialog.Builder(this).setTitle("Was verkaufen? (so viel der Kipper fasst)")
                 .setItems(labels.toArray(new String[0]), (d, which) -> {
                     String err = game.startSellJob(v, prods.get(which));
                     if (err != null) toast(err);
@@ -662,37 +669,52 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     // ----------------------------------------------------------------- Dialoge
 
     private void showShop() {
-        String[] cats = {"🚜 Fahrzeuge", "🔧 Geräte", "🐄 Ställe", "🌾 Felder", "💸 Etwas verkaufen"};
+        final String[] cats = {"🚜 Traktoren", "🌾 Mähdrescher", "🌽 Feldhäcksler", "🥔 Kartoffelroder", "⛏ Grubber",
+                "🌱 Sämaschinen", "🥔 Kartoffel-Legemaschinen", "🧪 Düngerstreuer", "🚛 Kipper", "🐄 Ställe", "🌾 Felder",
+                "💸 Etwas verkaufen"};
         new AlertDialog.Builder(this).setTitle("Kaufen – Kontostand " + Game.euro(game.money))
                 .setItems(cats, (d, which) -> {
-                    if (which == 0) shopVehicles();
-                    else if (which == 1) shopTools();
-                    else if (which == 2) shopStables();
-                    else if (which == 3) new AlertDialog.Builder(this).setMessage(
-                            "Felder kaufst du direkt auf der Karte: Feld antippen → „Kaufen“.\nPreis: ca. "
-                                    + Game.euro(Defs.FIELD_PRICE_HA) + " pro Hektar.").setPositiveButton("OK", null).show();
-                    else sellStuff();
+                    switch (which) {
+                        case 0: shopModels(cats[0], Defs.K_TRACTOR, 0); break;
+                        case 1: shopModels(cats[1], Defs.K_HARVESTER, Defs.H_COMBINE); break;
+                        case 2: shopModels(cats[2], Defs.K_HARVESTER, Defs.H_CHOPPER); break;
+                        case 3: shopModels(cats[3], Defs.K_HARVESTER, Defs.H_POTATO); break;
+                        case 4: shopModels(cats[4], Defs.K_TOOL, Defs.T_GRUBBER); break;
+                        case 5: shopModels(cats[5], Defs.K_TOOL, Defs.T_SEEDER); break;
+                        case 6: shopModels(cats[6], Defs.K_TOOL, Defs.T_PLANTER); break;
+                        case 7: shopModels(cats[7], Defs.K_TOOL, Defs.T_SPREADER); break;
+                        case 8: shopModels(cats[8], Defs.K_TOOL, Defs.T_TRAILER); break;
+                        case 9: shopStables(); break;
+                        case 10:
+                            new AlertDialog.Builder(this).setMessage(
+                                    "Felder kaufst du direkt auf der Karte: Feld antippen → „Kaufen“.\nPreis: ca. "
+                                            + Game.euro(Defs.FIELD_PRICE_HA) + " pro Hektar.").setPositiveButton("OK", null).show();
+                            break;
+                        default: sellStuff();
+                    }
                 }).show();
     }
 
-    private void shopVehicles() {
-        String[] items = new String[Defs.V_NAMES.length];
-        String[] info = {"zieht alle Geräte", "zieht Geräte 1,7× so schnell", "erntet Weizen",
-                "erntet Mais und Gras", "erntet Kartoffeln"};
-        for (int i = 0; i < items.length; i++) items[i] = Defs.V_NAMES[i] + " – " + Game.euro(Defs.V_PRICE[i]) + "\n   " + info[i];
-        new AlertDialog.Builder(this).setTitle("Fahrzeuge (gebraucht)").setItems(items, (d, which) ->
-                confirmBuy(Defs.V_NAMES[which], Defs.V_PRICE[which], () -> game.buyVehicle(which))).show();
-    }
-
-    private void shopTools() {
-        String[] items = new String[Defs.T_NAMES.length];
-        for (int i = 0; i < items.length; i++) {
-            int have = 0;
-            for (Game.Tool t : game.tools) if (t.type == i) have++;
-            items[i] = Defs.T_NAMES[i] + " – " + Game.euro(Defs.T_PRICE[i]) + "  (hast du: " + have + ")";
+    private void shopModels(String title, int kind, int sub) {
+        final List<Defs.Model> list = new ArrayList<>();
+        for (Defs.Model m : Defs.MODELS) {
+            if (m.kind != kind) continue;
+            if (kind != Defs.K_TRACTOR && m.sub != sub) continue;
+            list.add(m);
         }
-        new AlertDialog.Builder(this).setTitle("Geräte").setItems(items, (d, which) ->
-                confirmBuy(Defs.T_NAMES[which], Defs.T_PRICE[which], () -> game.buyTool(which))).show();
+        String[] items = new String[list.size()];
+        for (int i = 0; i < list.size(); i++) {
+            Defs.Model m = list.get(i);
+            int have = 0;
+            for (Game.Vehicle v : game.vehicles) if (v.model == m.id) have++;
+            for (Game.Tool t : game.tools) if (t.model == m.id) have++;
+            items[i] = m.name + " – " + Game.euro(m.price) + (have > 0 ? "  (hast du: " + have + ")" : "") + "\n   " + m.info;
+        }
+        String head = kind == Defs.K_TOOL ? title + "\n(Stufe = nötige Traktor-Leistung)" : title;
+        new AlertDialog.Builder(this).setTitle(head).setItems(items, (d, which) -> {
+            final Defs.Model m = list.get(which);
+            confirmBuy(m.name, m.price, () -> game.buy(m.id));
+        }).show();
     }
 
     private void shopStables() {
@@ -728,11 +750,11 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         List<String> labels = new ArrayList<>();
         for (Game.Vehicle v : game.vehicles) {
             things.add(v);
-            labels.add("🚜 " + v.name() + " – bringt " + Game.euro(Defs.V_PRICE[v.type] * 0.5));
+            labels.add("🚜 " + v.name() + " – bringt " + Game.euro(v.m().price * 0.5));
         }
         for (Game.Tool t : game.tools) {
             things.add(t);
-            labels.add("🔧 " + Defs.T_NAMES[t.type] + " – bringt " + Game.euro(Defs.T_PRICE[t.type] * 0.5));
+            labels.add("🔧 " + t.m().name + (t.attachedTo != -1 ? " (in Benutzung)" : "") + " – bringt " + Game.euro(t.m().price * 0.5));
         }
         new AlertDialog.Builder(this).setTitle("Verkaufen (halber Preis)")
                 .setItems(labels.toArray(new String[0]), (d, which) -> {
@@ -786,7 +808,12 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     private void showFleet() {
         final List<Game.Vehicle> list = new ArrayList<>(game.vehicles);
         String[] items = new String[list.size()];
-        for (int i = 0; i < list.size(); i++) items[i] = list.get(i).name() + "\n   " + list.get(i).status;
+        for (int i = 0; i < list.size(); i++) {
+            Game.Vehicle v = list.get(i);
+            Game.Tool t = game.tool(v.tool);
+            items[i] = v.name() + (v.isTractor() ? " (Stufe " + v.m().level + ")" : "") + "\n   " + v.status
+                    + (t != null ? " • " + t.m().name : "");
+        }
         new AlertDialog.Builder(this).setTitle("Fuhrpark (antippen = auf der Karte zeigen)")
                 .setItems(items, (d, which) -> {
                     Game.Vehicle v = list.get(which);

@@ -511,27 +511,29 @@ public class MapView extends View {
     // ---------------------------------------------------------- Fahrzeuge
 
     private void drawVehicle(Canvas c, Game.Vehicle v, boolean selected) {
-        float len = Defs.V_SIZE[v.type][0], wid = Defs.V_SIZE[v.type][1];
-        float mult = Math.max(1f, 14f / (len * scale));
+        Defs.Model m = v.m();
+        float len = m.len, wid = m.wid;
+        Game.Tool tool = game.tool(v.tool);
+        float total = len + (tool != null ? tool.m().len + 0.6f : 0);
+        float mult = Math.max(1f, 14f / (total * scale));
         c.save();
         c.translate(v.x, v.y);
         if (selected) {
             stroke.setColor(0xFFFFEB3B);
             stroke.setStrokeWidth(3f / scale);
-            c.drawCircle(0, 0, len * mult * 0.9f, stroke);
+            c.drawCircle(0, 0, total * mult * 0.7f, stroke);
         }
         c.rotate(v.heading);
         c.scale(mult, mult);
-        Game.Tool tool = game.tool(v.tool);
-        if (Defs.isTractor(v.type)) {
-            if (tool != null) drawTool(c, tool.type, -len / 2, v);
-            drawTractor(c, len, wid, v.type == Defs.V_TRACTOR_L ? 0xFFC62828 : 0xFF2E7D32);
-        } else if (v.type == Defs.V_COMBINE) {
-            drawCombine(c, len, wid, v);
-        } else if (v.type == Defs.V_CHOPPER) {
-            drawChopper(c, len, wid, v);
+        if (v.isTractor()) {
+            if (tool != null) drawTool(c, tool.m(), -len / 2, v);
+            drawTractor(c, len, wid, m.color);
+        } else if (m.sub == Defs.H_COMBINE) {
+            drawCombine(c, len, wid, v, m.color);
+        } else if (m.sub == Defs.H_CHOPPER) {
+            drawChopper(c, len, wid, v, m.color);
         } else {
-            drawPotatoHarvester(c, len, wid, v);
+            drawPotatoHarvester(c, len, wid, v, m.color);
         }
         c.restore();
     }
@@ -562,56 +564,58 @@ public class MapView extends View {
         c.drawRect(r, fill);
     }
 
-    private void drawTool(Canvas c, int type, float back, Game.Vehicle v) {
-        switch (type) {
+    private void drawTool(Canvas c, Defs.Model m, float back, Game.Vehicle v) {
+        float hw = m.wid / 2, len = m.len;
+        float b0 = back - 0.6f, b1 = b0 - len;
+        fill.setColor(0xFF616161);
+        c.drawRect(b0, -0.15f, back, 0.15f, fill);
+        switch (m.sub) {
             case Defs.T_GRUBBER: {
-                fill.setColor(0xFF616161);
-                c.drawRect(back - 0.6f, -0.2f, back, 0.2f, fill);
                 fill.setColor(0xFF9E9E9E);
-                c.drawRect(back - 2.2f, -2.0f, back - 0.6f, 2.0f, fill);
+                c.drawRect(b1, -hw, b0, hw, fill);
                 stroke.setColor(0xFF424242);
                 stroke.setStrokeWidth(0.18f);
-                for (float y = -1.8f; y <= 1.8f; y += 0.45f) c.drawLine(back - 2.4f, y, back - 0.8f, y, stroke);
+                for (float y = -hw + 0.2f; y <= hw - 0.1f; y += 0.45f) c.drawLine(b1 - 0.2f, y, b0 - 0.2f, y, stroke);
+                fill.setColor(0xFF616161);
+                c.drawRect(b0 - 0.4f, -hw, b0 - 0.2f, hw, fill);
                 break;
             }
             case Defs.T_SEEDER: {
-                fill.setColor(0xFF616161);
-                c.drawRect(back - 0.6f, -0.2f, back, 0.2f, fill);
                 fill.setColor(0xFF1565C0);
-                c.drawRect(back - 2.6f, -1.8f, back - 0.6f, 1.8f, fill);
+                c.drawRect(b1, -hw, b0, hw, fill);
                 fill.setColor(0xFF42A5F5);
-                c.drawRect(back - 2.2f, -1.4f, back - 1.0f, 1.4f, fill);
+                c.drawRect(b1 + 0.4f, -hw + 0.4f, b0 - 0.4f, hw - 0.4f, fill);
                 break;
             }
             case Defs.T_PLANTER: {
-                fill.setColor(0xFF616161);
-                c.drawRect(back - 0.6f, -0.2f, back, 0.2f, fill);
                 fill.setColor(0xFFE65100);
-                c.drawRect(back - 3.0f, -1.6f, back - 0.6f, 1.6f, fill);
+                c.drawRect(b1, -hw, b0, hw, fill);
                 fill.setColor(0xFFA1887F);
-                c.drawRect(back - 2.6f, -1.2f, back - 1.0f, 1.2f, fill);
+                c.drawRect(b1 + 0.4f, -hw + 0.4f, b0 - 0.4f, hw - 0.4f, fill);
                 break;
             }
             case Defs.T_SPREADER: {
                 fill.setColor(0xFFF57C00);
-                c.drawCircle(back - 1.1f, 0, 1.1f, fill);
+                c.drawCircle((b0 + b1) / 2, 0, hw, fill);
                 fill.setColor(0xFFFFFFFF);
-                c.drawCircle(back - 1.1f, 0, 0.6f, fill);
+                c.drawCircle((b0 + b1) / 2, 0, hw * 0.55f, fill);
                 break;
             }
-            default: { // Anhänger
-                fill.setColor(0xFF616161);
-                c.drawRect(back - 0.9f, -0.15f, back, 0.15f, fill);
-                wheel(c, back - 4.6f, back - 3.2f, -1.45f, -1.0f);
-                wheel(c, back - 4.6f, back - 3.2f, 1.0f, 1.45f);
+            default: { // Kipper
+                int axles = m.cap >= 33 ? 3 : m.cap >= 20 ? 2 : 1;
+                for (int a = 0; a < axles; a++) {
+                    float ax = b1 + len * 0.3f + a * 1.1f;
+                    wheel(c, ax - 0.5f, ax + 0.5f, -hw - 0.2f, -hw + 0.3f);
+                    wheel(c, ax - 0.5f, ax + 0.5f, hw - 0.3f, hw + 0.2f);
+                }
                 fill.setColor(0xFF558B2F);
-                c.drawRect(back - 7.2f, -1.25f, back - 0.9f, 1.25f, fill);
+                c.drawRect(b1, -hw, b0, hw, fill);
                 fill.setColor(0xFF33691E);
-                c.drawRect(back - 7.0f, -1.05f, back - 1.1f, 1.05f, fill);
+                c.drawRect(b1 + 0.2f, -hw + 0.2f, b0 - 0.2f, hw - 0.2f, fill);
                 if (v.load > 0 && v.loadProduct >= 0) {
-                    float f = (float) Math.min(1, v.load / Defs.TRAILER_CAP);
+                    float f = (float) Math.min(1, v.load / m.cap);
                     fill.setColor(PRODUCT_COLOR[v.loadProduct]);
-                    r.set(back - 7.0f, -1.05f * f, back - 1.1f, 1.05f * f);
+                    r.set(b1 + 0.2f, -(hw - 0.2f) * f, b0 - 0.2f, (hw - 0.2f) * f);
                     c.drawRoundRect(r, 0.8f, 0.8f, fill);
                 }
             }
@@ -619,7 +623,7 @@ public class MapView extends View {
     }
 
     private void loadFill(Canvas c, Game.Vehicle v, float x0, float x1, float hw) {
-        double cap = Defs.V_TANK[v.type];
+        double cap = v.m().cap;
         if (v.load <= 0 || cap <= 0 || v.loadProduct < 0) return;
         float f = (float) Math.min(1, v.load / cap);
         fill.setColor(PRODUCT_COLOR[v.loadProduct]);
@@ -627,20 +631,20 @@ public class MapView extends View {
         c.drawRoundRect(r, 0.5f, 0.5f, fill);
     }
 
-    private void drawCombine(Canvas c, float L, float W, Game.Vehicle v) {
+    private void drawCombine(Canvas c, float L, float W, Game.Vehicle v, int color) {
         float hl = L / 2, hw = W / 2;
+        float header = W * 0.95f + 1.5f;
         wheel(c, hl * 0.05f, hl * 0.55f, -hw - 0.2f, -hw + 0.6f);
         wheel(c, hl * 0.05f, hl * 0.55f, hw - 0.6f, hw + 0.2f);
-        // Schneidwerk
         fill.setColor(0xFFF9A825);
-        c.drawRect(hl * 0.75f, -3.2f, hl + 0.9f, 3.2f, fill);
+        c.drawRect(hl * 0.75f, -header, hl + 0.9f, header, fill);
         stroke.setColor(0xFFBF7F00);
         stroke.setStrokeWidth(0.15f);
-        for (float y = -3f; y <= 3f; y += 0.6f) c.drawLine(hl * 0.78f, y, hl + 0.8f, y, stroke);
-        fill.setColor(0xFF2E7D32);
+        for (float y = -header + 0.2f; y <= header - 0.2f; y += 0.6f) c.drawLine(hl * 0.78f, y, hl + 0.8f, y, stroke);
+        fill.setColor(color);
         r.set(-hl, -hw * 0.75f, hl * 0.78f, hw * 0.75f);
         c.drawRoundRect(r, 0.5f, 0.5f, fill);
-        fill.setColor(0xFF1B5E20);
+        fill.setColor(mix(color, 0xFF000000, 0.3));
         r.set(-hl * 0.8f, -hw * 0.55f, hl * 0.15f, hw * 0.55f);
         c.drawRoundRect(r, 0.4f, 0.4f, fill);
         loadFill(c, v, -hl * 0.75f, hl * 0.1f, hw * 0.5f);
@@ -649,43 +653,43 @@ public class MapView extends View {
         c.drawRoundRect(r, 0.3f, 0.3f, fill);
         fill.setColor(0xFF90CAF9);
         c.drawRect(hl * 0.62f, -hw * 0.4f, hl * 0.72f, hw * 0.4f, fill);
-        // Abtankrohr
-        stroke.setColor(0xFF1B5E20);
+        stroke.setColor(mix(color, 0xFF000000, 0.3));
         stroke.setStrokeWidth(0.35f);
         c.drawLine(-hl * 0.3f, -hw * 0.5f, -hl * 0.6f, -hw - 1.4f, stroke);
     }
 
-    private void drawChopper(Canvas c, float L, float W, Game.Vehicle v) {
+    private void drawChopper(Canvas c, float L, float W, Game.Vehicle v, int color) {
         float hl = L / 2, hw = W / 2;
+        float header = W * 0.7f + 0.8f;
         wheel(c, hl * 0.1f, hl * 0.6f, -hw - 0.2f, -hw + 0.6f);
         wheel(c, hl * 0.1f, hl * 0.6f, hw - 0.6f, hw + 0.2f);
         fill.setColor(0xFF424242);
-        c.drawRect(hl * 0.8f, -2.4f, hl + 0.8f, 2.4f, fill);
+        c.drawRect(hl * 0.8f, -header, hl + 0.8f, header, fill);
         stroke.setColor(0xFF9E9E9E);
         stroke.setStrokeWidth(0.15f);
-        for (float y = -2.2f; y <= 2.2f; y += 0.55f) c.drawLine(hl * 0.82f, y, hl + 0.7f, y, stroke);
-        fill.setColor(0xFF7CB342);
+        for (float y = -header + 0.2f; y <= header - 0.2f; y += 0.55f) c.drawLine(hl * 0.82f, y, hl + 0.7f, y, stroke);
+        fill.setColor(color);
         r.set(-hl, -hw * 0.75f, hl * 0.82f, hw * 0.75f);
         c.drawRoundRect(r, 0.5f, 0.5f, fill);
         loadFill(c, v, -hl * 0.85f, -hl * 0.1f, hw * 0.55f);
         fill.setColor(0xFFECEFF1);
         r.set(hl * 0.3f, -hw * 0.5f, hl * 0.75f, hw * 0.5f);
         c.drawRoundRect(r, 0.3f, 0.3f, fill);
-        stroke.setColor(0xFF33691E);
+        stroke.setColor(mix(color, 0xFF000000, 0.4));
         stroke.setStrokeWidth(0.5f);
         c.drawLine(hl * 0.1f, -hw * 0.4f, -hl * 0.2f, -hw - 2.2f, stroke);
     }
 
-    private void drawPotatoHarvester(Canvas c, float L, float W, Game.Vehicle v) {
+    private void drawPotatoHarvester(Canvas c, float L, float W, Game.Vehicle v, int color) {
         float hl = L / 2, hw = W / 2;
         wheel(c, -hl * 0.5f, hl * 0.0f, -hw - 0.2f, -hw + 0.6f);
         wheel(c, -hl * 0.5f, hl * 0.0f, hw - 0.6f, hw + 0.2f);
         fill.setColor(0xFF5D4037);
-        c.drawRect(hl * 0.75f, -1.7f, hl + 0.6f, 1.7f, fill);
-        fill.setColor(0xFFEF6C00);
+        c.drawRect(hl * 0.75f, -hw * 0.9f, hl + 0.6f, hw * 0.9f, fill);
+        fill.setColor(color);
         r.set(-hl, -hw * 0.8f, hl * 0.8f, hw * 0.8f);
         c.drawRoundRect(r, 0.5f, 0.5f, fill);
-        fill.setColor(0xFFBF360C);
+        fill.setColor(mix(color, 0xFF000000, 0.3));
         r.set(-hl * 0.85f, -hw * 0.6f, hl * 0.1f, hw * 0.6f);
         c.drawRoundRect(r, 0.3f, 0.3f, fill);
         loadFill(c, v, -hl * 0.8f, hl * 0.05f, hw * 0.55f);

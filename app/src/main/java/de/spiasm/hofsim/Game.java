@@ -18,7 +18,11 @@ public class Game {
     // ------------------------------------------------------------ Datentypen
 
     public static class Tool {
-        public int id, type, attachedTo = -1;
+        public int id, model, attachedTo = -1;
+
+        public Defs.Model m() {
+            return Defs.model(model);
+        }
     }
 
     public static final int GOTO = 0, PICKUP = 1, DROP = 2, WORK = 3, UNLOAD = 4, LOAD = 5, SELL = 6;
@@ -35,7 +39,7 @@ public class Game {
     }
 
     public static class Vehicle {
-        public int id, type, parkSlot;
+        public int id, model, parkSlot;
         public float x, y, heading;
         public int tool = -1;
         public double load;
@@ -50,7 +54,19 @@ public class Game {
         }
 
         public String name() {
-            return Defs.V_NAMES[type] + " #" + id;
+            return m().name + " #" + id;
+        }
+
+        public Defs.Model m() {
+            return Defs.model(model);
+        }
+
+        public boolean isTractor() {
+            return m().kind == Defs.K_TRACTOR;
+        }
+
+        public boolean isHarvester() {
+            return m().kind == Defs.K_HARVESTER;
         }
     }
 
@@ -103,11 +119,11 @@ public class Game {
             start.growth = 0.5;
             start.fertilized = false;
         }
-        g.addVehicle(Defs.V_TRACTOR_S);
-        g.addTool(Defs.T_GRUBBER);
-        g.addTool(Defs.T_SEEDER);
-        g.addTool(Defs.T_SPREADER);
-        g.addTool(Defs.T_TRAILER);
+        g.addVehicle(Defs.modelByName("Vilstal 105"));
+        g.addTool(Defs.modelByName("Grubber 3,5 m"));
+        g.addTool(Defs.modelByName("Sämaschine 3 m"));
+        g.addTool(Defs.modelByName("Düngerstreuer 800 l"));
+        g.addTool(Defs.modelByName("Kipper 10 t"));
         g.stables[Defs.S_CHICKEN] = true;
         g.world.buildStable(Defs.S_CHICKEN);
         g.storage[Defs.WHEAT] = 12;
@@ -119,10 +135,10 @@ public class Game {
         return null;
     }
 
-    private Vehicle addVehicle(int type) {
+    private Vehicle addVehicle(int model) {
         Vehicle v = new Vehicle();
         v.id = nextId++;
-        v.type = type;
+        v.model = model;
         v.parkSlot = freeSlot();
         int[] p = world.parking(v.parkSlot);
         v.x = (p[0] + 0.5f) * Defs.TILE;
@@ -140,10 +156,10 @@ public class Game {
         }
     }
 
-    private Tool addTool(int type) {
+    private Tool addTool(int model) {
         Tool t = new Tool();
         t.id = nextId++;
-        t.type = type;
+        t.model = model;
         tools.add(t);
         return t;
     }
@@ -205,7 +221,7 @@ public class Game {
         // Fahrzeuge
         for (Vehicle v : new ArrayList<>(vehicles)) {
             if (v.busy()) {
-                money -= (Defs.HELPER_WAGE + Defs.V_DIESEL[v.type]) * dt / 3600.0;
+                money -= (Defs.HELPER_WAGE + v.m().diesel) * dt / 3600.0;
                 updateVehicle(v, dt);
             }
         }
@@ -285,11 +301,11 @@ public class Game {
                     Tool t = null;
                     if (v.tool >= 0) {
                         Tool cur = tool(v.tool);
-                        if (cur != null && cur.type == s.a) t = cur;
+                        if (cur != null && cur.m().sub == s.a && cur.m().level <= v.m().level) t = cur;
                     }
-                    if (t == null) t = freeTool(s.a);
+                    if (t == null) t = bestFreeTool(s.a, v.m().level);
                     if (t == null) {
-                        abort(v, "⚠ " + v.name() + ": kein freies Gerät „" + Defs.T_NAMES[s.a] + "“.");
+                        abort(v, "⚠ " + v.name() + ": kein passender freier " + Defs.T_KIND_NAMES[s.a] + ".");
                         return;
                     }
                     t.attachedTo = v.id;
@@ -320,7 +336,8 @@ public class Game {
                     break;
                 }
                 case LOAD: {
-                    double amount = Math.min(storage[s.a], Defs.TRAILER_CAP);
+                    Tool tr = tool(v.tool);
+                    double amount = Math.min(storage[s.a], tr != null ? tr.m().cap : 0);
                     if (amount < 0.1) {
                         abort(v, "⚠ Kein " + Defs.PRODUCT_NAMES[s.a] + " im Lager.");
                         return;
@@ -371,7 +388,7 @@ public class Game {
             float[] t = v.path.get(v.pathIdx);
             float dx = t[0] - v.x, dy = t[1] - v.y;
             double d = Math.hypot(dx, dy);
-            double sp = Defs.V_SPEED[v.type] * world.speedFactor(v.x, v.y);
+            double sp = v.m().speed * world.speedFactor(v.x, v.y);
             if (d < 1e-3) {
                 v.pathIdx++;
                 continue;
@@ -393,10 +410,10 @@ public class Game {
     }
 
     private double workRate(Vehicle v, Field f, int task) {
-        if (task == Defs.TASK_HARVEST) return Defs.harvestRate(v.type, f.crop);
+        if (task == Defs.TASK_HARVEST) return Defs.harvestRate(v.m(), f.crop);
         Tool t = tool(v.tool);
         if (t == null) return 0;
-        return Defs.T_RATE[t.type] * Defs.V_POWER[v.type];
+        return t.m().rate;
     }
 
     private double work(Vehicle v, Step s, double dt) {
@@ -416,7 +433,7 @@ public class Game {
         double yieldHa = 0;
         if (harvest) {
             yieldHa = Defs.YIELD[f.crop] * (f.fertilized ? 1.0 : 0.8);
-            double cap = Defs.V_TANK[v.type];
+            double cap = v.m().cap;
             double room = cap - v.load;
             double dpMax = room / (yieldHa * area);
             if (dp > dpMax) dp = Math.max(0, dpMax);
@@ -438,7 +455,7 @@ public class Game {
             v.steps.remove(0);
             return 0;
         }
-        if (harvest && v.load >= Defs.V_TANK[v.type] - 1e-6) {
+        if (harvest && v.load >= v.m().cap - 1e-6) {
             // Bunker voll: zum Hof, abladen, zurück
             int[] park = world.parking(v.parkSlot);
             int[] back = fieldTile(f);
@@ -456,9 +473,36 @@ public class Game {
         return new int[]{(int) wp[0], (int) wp[1]};
     }
 
-    private Tool freeTool(int type) {
-        for (Tool t : tools) if (t.type == type && t.attachedTo == -1) return t;
-        return null;
+    /** Bestes freies Gerät einer Art, das ein Traktor mit Stufe level ziehen kann */
+    private Tool bestFreeTool(int sub, int level) {
+        Tool best = null;
+        for (Tool t : tools) {
+            Defs.Model m = t.m();
+            if (m.sub != sub || t.attachedTo != -1 || m.level > level) continue;
+            if (best == null || m.rate + m.cap > best.m().rate + best.m().cap) best = t;
+        }
+        return best;
+    }
+
+    /** Warum kann Traktor v kein Gerät dieser Art nehmen? null = kann er */
+    private String toolProblem(Vehicle v, int sub) {
+        Tool cur = tool(v.tool);
+        if (cur != null && cur.m().sub == sub && cur.m().level <= v.m().level) return null;
+        if (bestFreeTool(sub, v.m().level) != null) return null;
+        boolean any = false, anyFree = false;
+        int minLevel = 99;
+        for (Tool t : tools) {
+            if (t.m().sub != sub) continue;
+            any = true;
+            if (t.attachedTo == -1) anyFree = true;
+            minLevel = Math.min(minLevel, t.m().level);
+        }
+        String kind = Defs.T_KIND_NAMES[sub];
+        if (!any) return "Du hast keinen " + kind + " (im Shop unter Geräte).";
+        if (minLevel > v.m().level) return v.name() + " (Stufe " + v.m().level + ") ist zu schwach – dein kleinster "
+                + kind + " braucht Stufe " + minLevel + ".";
+        if (!anyFree) return "Dein " + kind + " ist gerade an einer anderen Maschine.";
+        return "Kein passender " + kind + " frei für Stufe " + v.m().level + ".";
     }
 
     private void abort(Vehicle v, String message) {
@@ -483,10 +527,8 @@ public class Game {
         return -1;
     }
 
-    private boolean hasTool(Vehicle v, int type) {
-        Tool cur = tool(v.tool);
-        if (cur != null && cur.type == type) return true;
-        return freeTool(type) != null;
+    private boolean hasTool(Vehicle v, int sub) {
+        return toolProblem(v, sub) == null;
     }
 
     /** Kosten für Saatgut/Dünger */
@@ -505,11 +547,12 @@ public class Game {
         if (v.busy()) return v.name() + " ist gerade beschäftigt.";
         if (task == Defs.TASK_HARVEST) {
             int need = Defs.harvesterFor(f.crop);
-            if (v.type != need) return "Zum Ernten von " + Defs.CROP_NAMES[f.crop] + " brauchst du einen " + Defs.V_NAMES[need] + ".";
+            if (!v.isHarvester() || v.m().sub != need)
+                return "Zum Ernten von " + Defs.CROP_NAMES[f.crop] + " brauchst du einen " + Defs.H_KIND_NAMES[need] + ".";
         } else {
-            if (!Defs.isTractor(v.type)) return "Dafür brauchst du einen Traktor.";
-            int tt = toolFor(task, crop);
-            if (!hasTool(v, tt)) return "Du hast keinen freien „" + Defs.T_NAMES[tt] + "“.";
+            if (!v.isTractor()) return "Dafür brauchst du einen Traktor.";
+            String p = toolProblem(v, toolFor(task, crop));
+            if (p != null) return p;
         }
         double cost = taskCost(f, task, crop);
         if (cost > 0 && money < cost) return "Zu wenig Geld (" + euro(cost) + " nötig).";
@@ -528,10 +571,10 @@ public class Game {
         f.task = task;
         if (task == Defs.TASK_SOW) f.taskCrop = crop;
         int[] park = world.parking(v.parkSlot);
-        if (Defs.isTractor(v.type)) {
+        if (v.isTractor()) {
             int tt = toolFor(task, crop);
             Tool cur = tool(v.tool);
-            if (cur == null || cur.type != tt) {
+            if (cur == null || cur.m().sub != tt || cur.m().level > v.m().level) {
                 if (cur != null) {
                     v.steps.add(new Step(GOTO, park[0], park[1], 1));
                     v.steps.add(new Step(DROP, 0, 0, 0));
@@ -545,7 +588,7 @@ public class Game {
         v.steps.add(new Step(WORK, f.index, task, crop));
         v.steps.add(new Step(GOTO, park[0], park[1], 1));
         if (task == Defs.TASK_HARVEST) v.steps.add(new Step(UNLOAD, 0, 0, 0));
-        if (Defs.isTractor(v.type)) v.steps.add(new Step(DROP, 0, 0, 0));
+        if (v.isTractor()) v.steps.add(new Step(DROP, 0, 0, 0));
         msg("👷 Helfer übernimmt: " + v.name() + " – " + Defs.TASK_NAMES[task] + " auf Feld " + f.number);
         return null;
     }
@@ -553,21 +596,35 @@ public class Game {
     /** Passendes freies Fahrzeug für eine Feldarbeit suchen */
     public Vehicle findVehicleFor(Field f, int task, int crop) {
         Vehicle best = null;
+        double bestScore = -1;
         for (Vehicle v : vehicles) {
             if (checkFieldJob(v, f, task, crop) != null) continue;
-            if (best == null || Defs.V_POWER[v.type] > Defs.V_POWER[best.type]) best = v;
+            double score;
+            if (task == Defs.TASK_HARVEST) {
+                score = Defs.harvestRate(v.m(), f.crop);
+            } else {
+                int sub = toolFor(task, crop);
+                Tool cur = tool(v.tool);
+                Tool t = cur != null && cur.m().sub == sub ? cur : bestFreeTool(sub, v.m().level);
+                score = (t != null ? t.m().rate : 0) * 100 - v.m().level; // bestes Gerät, dann kleinster Traktor
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                best = v;
+            }
         }
         return best;
     }
 
     public String startSellJob(Vehicle v, int product) {
-        if (!Defs.isTractor(v.type)) return "Zum Verkaufen brauchst du einen Traktor mit Anhänger.";
+        if (!v.isTractor()) return "Zum Verkaufen brauchst du einen Traktor mit Kipper.";
         if (v.busy()) return v.name() + " ist gerade beschäftigt.";
-        if (!hasTool(v, Defs.T_TRAILER)) return "Du hast keinen freien Anhänger.";
+        String tp = toolProblem(v, Defs.T_TRAILER);
+        if (tp != null) return tp;
         if (storage[product] < 0.5) return "Kein " + Defs.PRODUCT_NAMES[product] + " im Lager.";
         int[] park = world.parking(v.parkSlot);
         Tool cur = tool(v.tool);
-        if (cur == null || cur.type != Defs.T_TRAILER) {
+        if (cur == null || cur.m().sub != Defs.T_TRAILER || cur.m().level > v.m().level) {
             if (cur != null) {
                 v.steps.add(new Step(GOTO, park[0], park[1], 1));
                 v.steps.add(new Step(DROP, 0, 0, 0));
@@ -600,7 +657,7 @@ public class Game {
         int[] park = world.parking(v.parkSlot);
         v.steps.add(new Step(GOTO, park[0], park[1], 1));
         if (v.tool >= 0) v.steps.add(new Step(DROP, 0, 0, 0));
-        if (v.load > 0 && Defs.V_TANK[v.type] > 0) v.steps.add(new Step(UNLOAD, 0, 0, 0));
+        if (v.load > 0 && v.isHarvester()) v.steps.add(new Step(UNLOAD, 0, 0, 0));
     }
 
     public void stop(Vehicle v) {
@@ -610,17 +667,12 @@ public class Game {
 
     // ----------------------------------------------------------------- Kaufen
 
-    public String buyVehicle(int type) {
-        if (money < Defs.V_PRICE[type]) return "Zu wenig Geld.";
-        money -= Defs.V_PRICE[type];
-        addVehicle(type);
-        return null;
-    }
-
-    public String buyTool(int type) {
-        if (money < Defs.T_PRICE[type]) return "Zu wenig Geld.";
-        money -= Defs.T_PRICE[type];
-        addTool(type);
+    public String buy(int modelId) {
+        Defs.Model m = Defs.model(modelId);
+        if (money < m.price) return "Zu wenig Geld.";
+        money -= m.price;
+        if (m.kind == Defs.K_TOOL) addTool(modelId);
+        else addVehicle(modelId);
         return null;
     }
 
@@ -647,14 +699,14 @@ public class Game {
         if (vehicles.size() <= 1) return "Dein letztes Fahrzeug behältst du lieber.";
         Tool t = tool(v.tool);
         if (t != null) t.attachedTo = -1;
-        money += Defs.V_PRICE[v.type] * 0.5;
+        money += v.m().price * 0.5;
         vehicles.remove(v);
         return null;
     }
 
     public String sellTool(Tool t) {
         if (t.attachedTo != -1) return "Das Gerät ist gerade im Einsatz.";
-        money += Defs.T_PRICE[t.type] * 0.5;
+        money += t.m().price * 0.5;
         tools.remove(t);
         return null;
     }
@@ -663,7 +715,7 @@ public class Game {
 
     public JSONObject toJson() throws JSONException {
         JSONObject o = new JSONObject();
-        o.put("v", 1);
+        o.put("v", 2);
         o.put("seed", world.seed);
         o.put("money", money);
         o.put("time", time);
@@ -698,7 +750,7 @@ public class Game {
         for (Vehicle v : vehicles) {
             JSONObject j = new JSONObject();
             j.put("id", v.id);
-            j.put("type", v.type);
+            j.put("model", v.model);
             j.put("slot", v.parkSlot);
             j.put("x", v.x);
             j.put("y", v.y);
@@ -713,12 +765,13 @@ public class Game {
         }
         o.put("vehicles", va);
         JSONArray ta = new JSONArray();
-        for (Tool t : tools) ta.put(new JSONArray().put(t.id).put(t.type).put(t.attachedTo));
+        for (Tool t : tools) ta.put(new JSONArray().put(t.id).put(t.model).put(t.attachedTo));
         o.put("tools", ta);
         return o;
     }
 
     public static Game fromJson(JSONObject o) throws JSONException {
+        if (o.optInt("v", 1) < 2) throw new JSONException("alter Spielstand");
         Game g = new Game();
         g.world = new World(o.getLong("seed"));
         g.money = o.getDouble("money");
@@ -756,7 +809,7 @@ public class Game {
             JSONObject j = va.getJSONObject(i);
             Vehicle v = new Vehicle();
             v.id = j.getInt("id");
-            v.type = j.getInt("type");
+            v.model = j.getInt("model");
             v.parkSlot = j.getInt("slot");
             v.x = (float) j.getDouble("x");
             v.y = (float) j.getDouble("y");
@@ -776,7 +829,7 @@ public class Game {
             JSONArray a = ta.getJSONArray(i);
             Tool t = new Tool();
             t.id = a.getInt(0);
-            t.type = a.getInt(1);
+            t.model = a.getInt(1);
             t.attachedTo = a.getInt(2);
             g.tools.add(t);
         }
