@@ -443,7 +443,7 @@ public class MapView extends View {
         if (mowed && state == Field.GROWING && crop == Defs.GRASS) {
             fill.setColor(0xFF9CCC65);
             c.drawRect(l, t, rr, b, fill);
-            if (detail == 0) return;
+            if (this.detail == 0) return;
             stroke.setColor(0xFFB5B04A);
             stroke.setStrokeWidth(1.8f);
             stroke.setStrokeCap(Paint.Cap.BUTT);
@@ -452,7 +452,7 @@ public class MapView extends View {
             return;
         }
         float rowSp = Math.max(2.5f, 5f / scale);
-        boolean detail = scale >= 1.6f;
+        boolean fine = scale >= 1.6f;
         int base, row = 0;
         float rowW = rowSp * 0.35f;
         int dotColor = 0;
@@ -515,7 +515,7 @@ public class MapView extends View {
         }
         fill.setColor(base);
         c.drawRect(l, t, rr, b, fill);
-        if (detail == 0) return;
+        if (this.detail == 0) return;
         // Reihen
         stroke.setColor(row);
         stroke.setStrokeWidth(rowW);
@@ -523,7 +523,7 @@ public class MapView extends View {
         for (float y = t + rowSp / 2; y < b; y += rowSp) c.drawLine(l + 0.5f, y, rr - 0.5f, y, stroke);
         stroke.setStrokeCap(Paint.Cap.ROUND);
         // Pflanzen
-        if (dotR > 0 && detail) {
+        if (dotR > 0 && fine) {
             float dotSp = Math.max(rowSp * 0.6f, 4f / scale);
             fill.setColor(dotColor);
             for (float y = t + rowSp / 2; y < b; y += rowSp) {
@@ -535,14 +535,14 @@ public class MapView extends View {
             for (float y = t + rowSp / 2; y < b; y += rowSp) c.drawLine(l + 1, y, rr - 1, y, stroke);
         }
         // reifer Weizen: Ähren-Struktur
-        if (state == Field.GROWING && crop == Defs.WHEAT && g >= 1 && detail) {
+        if (state == Field.GROWING && crop == Defs.WHEAT && g >= 1 && fine) {
             fill.setColor(0x33FFF59D);
             Random rnd = new Random(seed * 7919L);
             int n = (int) ((rr - l) * (b - t) / 40);
             for (int i = 0; i < Math.min(n, 400); i++) c.drawCircle(l + rnd.nextFloat() * (rr - l), t + rnd.nextFloat() * (b - t), 1.2f, fill);
         }
         // Dünger
-        if (fert && state == Field.GROWING && g < 1 && detail) {
+        if (fert && state == Field.GROWING && g < 1 && fine) {
             fill.setColor(0xCCFFFFFF);
             Random rnd = new Random(seed * 31L + 5);
             int n = (int) ((rr - l) * (b - t) / 60);
