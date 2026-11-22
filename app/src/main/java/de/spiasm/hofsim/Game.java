@@ -90,6 +90,8 @@ public class Game {
     private int lastFeedWarn;
     /** Sonder-Nachfrage: Produkt (-1 = keine), Faktor, bis zu welchem Tag */
     public int bonusProduct = -1;
+    /** Futter-Reserve für die Tiere in Tagen – so viel wird nie verkauft */
+    public int reserveDays = 14;
     public double bonusFactor = 1;
     public int bonusUntil;
 
@@ -198,6 +200,25 @@ public class Game {
         double p = Defs.BASE_PRICE[product] * priceFactor[product];
         if (product == bonusProduct) p *= bonusFactor;
         return p;
+    }
+
+    /** Wie viel t eines Produkts als Tierfutter zurückgehalten werden */
+    public double reserved(int product) {
+        double need = 0;
+        for (int s = 0; s < 2; s++) if (stables[s]) need += Defs.S_FEED[s][product];
+        return need * reserveDays;
+    }
+
+    /** Wie viel t verkauft werden dürfen */
+    public double sellable(int product) {
+        return Math.max(0, storage[product] - reserved(product));
+    }
+
+    /** Futterbedarf pro Tag für ein Produkt (alle Ställe) */
+    public double feedPerDay(int product) {
+        double need = 0;
+        for (int s = 0; s < 2; s++) if (stables[s]) need += Defs.S_FEED[s][product];
+        return need;
     }
 
     public String buyerName(int product) {
@@ -375,9 +396,9 @@ public class Game {
                 }
                 case LOAD: {
                     Tool tr = tool(v.tool);
-                    double amount = Math.min(storage[s.a], tr != null ? tr.m().cap : 0);
+                    double amount = Math.min(sellable(s.a), tr != null ? tr.m().cap : 0);
                     if (amount < 0.1) {
-                        abort(v, "⚠ Kein " + Defs.PRODUCT_NAMES[s.a] + " im Lager.");
+                        abort(v, "⚠ Kein verkaufbares " + Defs.PRODUCT_NAMES[s.a] + " im Lager (Rest ist Tierfutter).");
                         return;
                     }
                     storage[s.a] -= amount;
@@ -687,6 +708,9 @@ public class Game {
         String tp = toolProblem(v, Defs.T_TRAILER);
         if (tp != null) return tp;
         if (storage[product] < 0.5) return "Kein " + Defs.PRODUCT_NAMES[product] + " im Lager.";
+        if (sellable(product) < 0.5) return String.format(Locale.GERMANY,
+                "Die %.1f t %s sind als Tierfutter reserviert (%d Tage). Die Reserve kannst du im Lager ändern.",
+                storage[product], Defs.PRODUCT_NAMES[product], reserveDays);
         int[] park = world.parking(v.parkSlot);
         Tool cur = tool(v.tool);
         if (cur == null || cur.m().sub != Defs.T_TRAILER || cur.m().level > v.m().level) {
@@ -783,6 +807,7 @@ public class Game {
         o.put("bonusP", bonusProduct);
         o.put("bonusF", bonusFactor);
         o.put("bonusU", bonusUntil);
+        o.put("reserve", reserveDays);
         o.put("seed", world.seed);
         o.put("money", money);
         o.put("time", time);
@@ -850,6 +875,7 @@ public class Game {
         g.bonusProduct = o.optInt("bonusP", -1);
         g.bonusFactor = o.optDouble("bonusF", 1);
         g.bonusUntil = o.optInt("bonusU", 0);
+        g.reserveDays = o.optInt("reserve", 14);
         JSONArray st = o.getJSONArray("storage"), pf = o.getJSONArray("prices");
         for (int i = 0; i < 4; i++) {
             g.storage[i] = st.getDouble(i);

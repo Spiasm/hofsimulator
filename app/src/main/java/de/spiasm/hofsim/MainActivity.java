@@ -181,7 +181,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                     + "dann zahlt ein Händler ein paar Tage lang deutlich mehr (Meldung oben).\n\n"
                     + "Ein Gerät kann immer nur an einem Traktor hängen – mit einem Grubber also nur ein Feld gleichzeitig.\n\n"
                     + "💾 Speichern: automatisch jede Minute und beim Verlassen, oder im Menü. „Weiterspielen“ lädt den Stand.\n\n"
-                    + "🐔 Ställe: Hühner fressen Weizen, Kühe Gras und Mais – aus deinem Lager. Dafür gibt's jeden Tag Geld.\n\n"
+                    + "🐔 Ställe: Hühner fressen Weizen, Kühe Gras und Mais – aus deinem Lager. Dafür gibt's jeden Tag Geld. Im Lager stellst du die Futter-Reserve ein (z. B. 30 Tage) – die wird nie verkauft.\n\n"
                     + "⏩ Zeit: Oben rechts die Geschwindigkeit wählen. Weizen wächst ca. 4 Wochen – bei 6000× sind das gut 6 Minuten.";
 
     private void showHelp() {
@@ -664,9 +664,13 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         List<String> labels = new ArrayList<>();
         for (int p = 0; p < 4; p++) {
             if (game.storage[p] < 0.5) continue;
+            boolean allReserved = game.sellable(p) < 0.5;
             prods.add(p);
-            labels.add(String.format(Locale.GERMANY, "%s – %.1f t im Lager, %s/t (%s)", Defs.PRODUCT_NAMES[p],
-                    game.storage[p], Game.euro(game.price(p)), Defs.BUYER[p] == 0 ? "Landhandel" : "Biogas"));
+            labels.add(String.format(Locale.GERMANY, "%s – %.1f t verkaufbar%s, %s/t (%s)", Defs.PRODUCT_NAMES[p],
+                    game.sellable(p), game.reserved(p) > 0 ? String.format(Locale.GERMANY, " (+%.1f t Futter-Reserve)",
+                            Math.min(game.reserved(p), game.storage[p])) : "",
+                    Game.euro(game.price(p)), Defs.BUYER[p] == 0 ? "Landhandel" : "Biogas")
+                    + (allReserved ? " – alles reserviert" : ""));
         }
         if (prods.isEmpty()) {
             toast("Dein Lager ist leer.");
@@ -786,7 +790,14 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         StringBuilder sb = new StringBuilder();
         sb.append("📦 Lager am Hof:\n");
         for (int p = 0; p < 4; p++) {
-            sb.append(String.format(Locale.GERMANY, "• %s: %.1f t\n", Defs.PRODUCT_NAMES[p], game.storage[p]));
+            sb.append(String.format(Locale.GERMANY, "• %s: %.1f t", Defs.PRODUCT_NAMES[p], game.storage[p]));
+            if (game.feedPerDay(p) > 0) {
+                sb.append(String.format(Locale.GERMANY, "\n   🐾 Tiere fressen %.2f t/Tag → reicht %.0f Tage"
+                                + "\n   🔒 Reserve %.1f t • 💶 verkaufbar %.1f t",
+                        game.feedPerDay(p), game.storage[p] / game.feedPerDay(p),
+                        Math.min(game.reserved(p), game.storage[p]), game.sellable(p)));
+            }
+            sb.append("\n");
         }
         sb.append("\n💶 Preise heute:\n");
         if (game.bonusText() != null) sb.append(game.bonusText()).append("\n");
@@ -819,7 +830,32 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             ha += f.hectares();
         }
         sb.append(String.format(Locale.GERMANY, "\n🌾 Deine Felder: %d (%.1f ha)", owned, ha));
-        new AlertDialog.Builder(this).setTitle("Lager & Preise").setMessage(sb.toString()).setPositiveButton("OK", null).show();
+        sb.append("\n\n🔒 Futter-Reserve: ").append(game.reserveDays).append(" Tage – so viel Futter wird nie verkauft, "
+                + "die Helfer laden nur den Rest auf.");
+        new AlertDialog.Builder(this).setTitle("Lager & Preise").setMessage(sb.toString())
+                .setPositiveButton("OK", null)
+                .setNeutralButton("🔒 Reserve ändern", (d, w) -> chooseReserve())
+                .show();
+    }
+
+    private void chooseReserve() {
+        final int[] opts = {0, 7, 14, 30, 60, 120};
+        String[] items = new String[opts.length];
+        for (int i = 0; i < opts.length; i++) {
+            StringBuilder sb = new StringBuilder();
+            sb.append(opts[i] == 0 ? "Keine Reserve (alles verkaufen)" : opts[i] + " Tage");
+            for (int p = 0; p < 4; p++) {
+                double need = game.feedPerDay(p);
+                if (need > 0 && opts[i] > 0) sb.append(String.format(Locale.GERMANY, "\n   = %.1f t %s", need * opts[i], Defs.PRODUCT_NAMES[p]));
+            }
+            items[i] = sb.toString();
+        }
+        new AlertDialog.Builder(this).setTitle("Wie lange soll das Tierfutter reichen?")
+                .setItems(items, (d, which) -> {
+                    game.reserveDays = opts[which];
+                    message("🔒 Futter-Reserve: " + opts[which] + " Tage");
+                    showStorage();
+                }).show();
     }
 
     private void showFleet() {
