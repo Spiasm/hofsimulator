@@ -6,7 +6,7 @@ public final class Defs {
     }
 
     public static final float TILE = 10f;          // 1 Kachel = 10 m
-    public static final int MAP = 128;             // 128 x 128 Kacheln = 1,28 km
+    public static final int MAP = 192;             // 192 x 192 Kacheln = 1,92 km
     public static final double HELPER_WAGE = 20;   // €/h
     public static final double START_MONEY = 200000;
     public static final double FIELD_PRICE_HA = 35000;
@@ -16,15 +16,19 @@ public final class Defs {
     public static final String[] CROP_NAMES = {"Wiese/Gras", "Weizen", "Kartoffeln", "Mais"};
     public static final String[] PRODUCT_NAMES = {"Gras-Silage", "Weizen", "Kartoffeln", "Mais-Silage"};
     /** Wachstumsdauer in Tagen */
-    public static final double[] GROW_DAYS = {12, 28, 30, 32};
+    public static final double[] GROW_DAYS = {3, 7, 8, 8};
     /** Ertrag in t/ha (gedüngt; ungedüngt 80 %) */
     public static final double[] YIELD = {9, 8.5, 42, 48};
     /** Saatgut €/ha */
     public static final double[] SEED_COST = {130, 110, 1300, 230};
-    /** Grundpreis €/t */
-    public static final double[] BASE_PRICE = {40, 230, 190, 48};
-    /** Wer kauft: 0 = Landhandel, 1 = Biogasanlage */
-    public static final int[] BUYER = {1, 0, 0, 1};
+    // ------------------------------------------------------------- Händler
+    public static final int B_LANDHANDEL = 0, B_MILL = 1, B_BIOGAS = 2;
+    public static final String[] BUYER_NAMES = {"Landhandel", "Mühle", "Biogasanlage"};
+    public static final String[] BUYER_TO = {"zum Landhandel", "zur Mühle", "zur Biogasanlage"};
+    /** Grundpreis €/t je Händler und Produkt {Gras, Weizen, Kartoffeln, Mais}; 0 = kauft nicht */
+    public static final double[][] BUY_BASE = {{0, 228, 190, 0}, {0, 240, 0, 0}, {40, 0, 0, 48}};
+    /** Wie stark die Preise schwanken (Mühle stärker) */
+    public static final double[] BUY_VOLATILITY = {0.025, 0.045, 0.02};
     public static final double FERTILIZER_COST = 180; // €/ha
     public static final double FERTILIZE_UNTIL = 0.6; // Düngen bis 60 % Wachstum
 
@@ -167,15 +171,27 @@ public final class Defs {
     public static final int[] TASK_ORDER = {TASK_CULTIVATE, TASK_SOW, TASK_FERTILIZE, TASK_MOW, TASK_HARVEST};
 
     // ---------------------------------------------------------------- Ställe
-    public static final int S_CHICKEN = 0, S_COW = 1;
-    public static final String[] S_NAMES = {"Hühnerstall (1000 Hennen)", "Kuhstall (40 Kühe)"};
-    public static final double[] S_PRICE = {90000, 350000};
+    public static final int S_CHICKEN = 0, S_COW = 1, S_PIG = 2, S_SHEEP = 3, STABLES = 4;
+    public static final String[] S_NAMES = {"Hühnerstall", "Kuhstall", "Schweinestall", "Schafstall"};
+    public static final String[] S_ANIMALS = {"1000 Hennen", "40 Milchkühe", "300 Mastschweine", "150 Schafe"};
+    public static final String[] S_PRODUCE = {"Eier", "Milch", "Schweine", "Lämmer und Wolle"};
+    public static final String[] S_ICON = {"🐔", "🐄", "🐖", "🐑"};
+    public static final double[] S_PRICE = {90000, 350000, 220000, 70000};
     /** Futter t/Tag je Produkt {Gras, Weizen, Kartoffeln, Mais} */
-    public static final double[][] S_FEED = {{0, 0.12, 0, 0}, {2.0, 0, 0, 0.9}};
+    public static final double[][] S_FEED = {{0, 0.12, 0, 0}, {2.0, 0, 0, 0.9}, {0, 0.6, 0.3, 0}, {0.6, 0, 0, 0}};
     /** Einnahmen €/Tag bei vollem Futter */
-    public static final double[] S_INCOME = {126, 538};
+    public static final double[] S_INCOME = {126, 538, 300, 110};
     /** Kosten €/Tag (Strom, Tierarzt, …) */
-    public static final double[] S_COST = {30, 120};
+    public static final double[] S_COST = {30, 120, 70, 20};
+    /** Futterlager im Stall reicht für so viele Tage */
+    public static final double S_STORE_DAYS = 40;
+
+    // ----------------------------------------------------------- Energie
+    public static final double PV_ROOF_PRICE = 18000, PV_ROOF_INCOME = 60;      // € / €/Tag bei voller Sonne
+    public static final double PV_FIELD_PRICE_HA = 150000, PV_FIELD_INCOME_HA = 420;
+    public static final double WIND_PRICE = 900000, WIND_INCOME = 2400;          // €/Tag bei vollem Wind
+    /** Sonnenstärke je Monat (Jahreszeit) */
+    public static final double[] SUN_SEASON = {0.3, 0.4, 0.6, 0.8, 0.95, 1.0, 1.0, 0.95, 0.8, 0.6, 0.4, 0.3};
 
     // --------------------------------------------------------------- Zeit
     public static final int[] SPEEDS = {0, 1, 10, 60, 300, 1500, 6000};

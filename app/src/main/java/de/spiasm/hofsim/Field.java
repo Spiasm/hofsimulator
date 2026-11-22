@@ -16,6 +16,10 @@ public class Field {
     public boolean fertilized;
     /** Gras gemäht und liegt im Schwad */
     public boolean mowed;
+    /** Solarpark statt Ackerbau */
+    public boolean pv;
+    /** verbrannte Fläche (Kreis in Metern), r = 0: nichts verbrannt */
+    public float burnX, burnY, burnR;
     /** Fremde Felder: Tage seit Ernte */
     public double idleDays;
 
@@ -47,6 +51,7 @@ public class Field {
 
     /** Welche Arbeiten sind gerade möglich? */
     public boolean canDo(int t) {
+        if (pv) return false;
         if (task != -1 && progress > 0) return t == task;
         switch (t) {
             case Defs.TASK_CULTIVATE:
@@ -65,10 +70,12 @@ public class Field {
     }
 
     public String stateText() {
+        if (pv) return "☀ Solarpark";
         String s;
         switch (state) {
             case STUBBLE:
                 s = crop >= 0 ? "Stoppeln (" + Defs.CROP_NAMES[crop] + " abgeerntet)" : "brach";
+                if (burnR > 0) s += ", teilweise abgebrannt";
                 break;
             case CULTIVATED:
                 s = "gegrubbert – bereit zum Säen";
@@ -91,6 +98,7 @@ public class Field {
             case Defs.TASK_CULTIVATE:
                 state = CULTIVATED;
                 mowed = false;
+                burnR = 0;
                 fertilized = false;
                 growth = 0;
                 break;
