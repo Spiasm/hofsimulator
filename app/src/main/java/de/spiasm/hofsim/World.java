@@ -34,17 +34,20 @@ public class World {
     private void generate(Random r) {
         for (int[] row : fieldAt) Arrays.fill(row, -1);
         // Hauptstraßen
-        int hy = 38 + r.nextInt(20);
-        int vx = 38 + r.nextInt(20);
+        int hy = (int) (n * 0.38) + r.nextInt((int) (n * 0.24));
+        int vx = (int) (n * 0.38) + r.nextInt((int) (n * 0.24));
         for (int i = 0; i < n; i++) {
             tile[i][hy] = ROAD;
             tile[vx][i] = ROAD;
         }
         // Nebenstraßen
-        int hy2 = hy < n / 2 ? hy + 22 + r.nextInt(8) : hy - 22 - r.nextInt(8);
+        int off = n / 4;
+        int hy2 = hy < n / 2 ? hy + off + r.nextInt(8) : hy - off - r.nextInt(8);
         boolean leftHalf = r.nextBoolean();
         for (int i = leftHalf ? 0 : vx; i <= (leftHalf ? vx : n - 1); i++) tile[i][hy2] = ROAD;
-        int vx2 = vx < n / 2 ? vx + 22 + r.nextInt(8) : vx - 22 - r.nextInt(8);
+        int hy3 = hy < n / 2 ? Math.max(3, hy - off + 4 - r.nextInt(6)) : Math.min(n - 4, hy + off - 4 + r.nextInt(6));
+        for (int i = leftHalf ? vx : 0; i <= (leftHalf ? n - 1 : vx); i++) tile[i][hy3] = ROAD;
+        int vx2 = vx < n / 2 ? vx + off + r.nextInt(8) : vx - off - r.nextInt(8);
         boolean topHalf = r.nextBoolean();
         for (int i = topHalf ? 0 : hy; i <= (topHalf ? hy : n - 1); i++) tile[vx2][i] = ROAD;
 
@@ -87,13 +90,13 @@ public class World {
         }
 
         // Felder
-        for (int k = 0; k < 3000 && fields.size() < 14; k++) {
+        for (int k = 0; k < 8000 && fields.size() < 16; k++) {
             int w = 14 + r.nextInt(13), h = 12 + r.nextInt(11);
             int x = 1 + r.nextInt(n - w - 2), y = 1 + r.nextInt(n - h - 2);
             int[] rect = {x, y, w, h};
             if (!areaIs(rect, GRASS, 0)) continue;
             if (!ringOk(rect)) continue;
-            if (!touches(rect, ROAD, fields.size() < 8 ? 1 : 6)) continue;
+            if (!touches(rect, ROAD, k < 4000 ? 1 : 8)) continue;
             Field f = new Field(fields.size(), x, y, w, h);
             fields.add(f);
             for (int i = x; i < x + w; i++) {
@@ -110,7 +113,7 @@ public class World {
         for (int i = 0; i < sorted.size(); i++) sorted.get(i).number = i + 1;
 
         // Wald und Weiher
-        for (int k = 0; k < 7; k++) blob(r, FOREST, 3 + r.nextInt(5));
+        for (int k = 0; k < 10; k++) blob(r, FOREST, 3 + r.nextInt(6));
         blob(r, WATER, 3 + r.nextInt(2));
     }
 
@@ -214,6 +217,14 @@ public class World {
     /** Stall bauen: Kacheln blockieren */
     public void buildStable(int s) {
         fill(stablePlot[s], BUILDING);
+    }
+
+    /** Abstellplatz im Hof für Gerät Nr. i (Kachel) */
+    public int[] toolSpot(int i) {
+        boolean below = hof[1] > hofGate[1];
+        int row = below ? hof[1] + 1 : hof[1] + 8;
+        if (i >= 13) row += below ? -1 : 1;
+        return new int[]{hof[0] + (i % 13), row};
     }
 
     /** Parkplatz im Hof für Fahrzeug Nr. i (Kachel) */

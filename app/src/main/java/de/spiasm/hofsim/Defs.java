@@ -6,7 +6,7 @@ public final class Defs {
     }
 
     public static final float TILE = 10f;          // 1 Kachel = 10 m
-    public static final int MAP = 96;              // 96 x 96 Kacheln = 960 m
+    public static final int MAP = 128;             // 128 x 128 Kacheln = 1,28 km
     public static final double HELPER_WAGE = 20;   // €/h
     public static final double START_MONEY = 200000;
     public static final double FIELD_PRICE_HA = 35000;
@@ -31,8 +31,9 @@ public final class Defs {
     // ------------------------------------------------- Maschinen-Katalog
     public static final int K_TRACTOR = 0, K_TOOL = 1, K_HARVESTER = 2;
     /** Geräte-Arten */
-    public static final int T_GRUBBER = 0, T_SEEDER = 1, T_PLANTER = 2, T_SPREADER = 3, T_TRAILER = 4;
-    public static final String[] T_KIND_NAMES = {"Grubber", "Sämaschine", "Kartoffel-Legemaschine", "Düngerstreuer", "Kipper"};
+    public static final int T_GRUBBER = 0, T_SEEDER = 1, T_PLANTER = 2, T_SPREADER = 3, T_TRAILER = 4, T_MOWER = 5, T_LOADER = 6;
+    public static final String[] T_KIND_NAMES = {"Grubber", "Sämaschine", "Kartoffel-Legemaschine", "Düngerstreuer", "Kipper",
+            "Mähwerk", "Ladewagen"};
     /** Erntemaschinen-Arten */
     public static final int H_COMBINE = 0, H_CHOPPER = 1, H_POTATO = 2;
     public static final String[] H_KIND_NAMES = {"Mähdrescher", "Feldhäcksler", "Kartoffelroder"};
@@ -92,7 +93,7 @@ public final class Defs {
             tractor("Isartaler 70", 70, 1, 25000, 35, 12, 3.8f, 2.0f, 0xFF1E88E5),
             tractor("Vilstal 105", 105, 2, 42000, 40, 18, 4.3f, 2.3f, 0xFF2E7D32),
             tractor("Spies 140", 140, 3, 68000, 40, 25, 4.8f, 2.5f, 0xFFC62828),
-            tractor("Hofmann 190", 190, 4, 105000, 50, 33, 5.2f, 2.6f, 0xFF558B2F),
+            tractor("M.Mayer 190", 190, 4, 105000, 50, 33, 5.2f, 2.6f, 0xFFF9A825),
             tractor("Hofmann 260", 260, 5, 165000, 50, 45, 5.8f, 2.8f, 0xFF33691E),
             tractor("Titan 400", 400, 6, 260000, 50, 65, 6.8f, 3.0f, 0xFF37474F),
             // Grubber
@@ -117,6 +118,12 @@ public final class Defs {
             tool(T_TRAILER, "Kipper „Martin“ 20 t", "20 t", 4, 22000, 0, 20, 7.5f, 2.55f),
             tool(T_TRAILER, "Kipper 26 t", "26 t, Tandem", 5, 32000, 0, 26, 8.5f, 2.55f),
             tool(T_TRAILER, "Kipper 33 t", "33 t, Tridem", 6, 45000, 0, 33, 9.5f, 2.55f),
+            // Mähwerke (Gras mähen)
+            tool(T_MOWER, "Mähwerk 3 m", "3 m", 1, 8000, 2.5, 0, 1.6f, 3.0f),
+            tool(T_MOWER, "Mähwerk-Kombination 9 m", "9 m (Front + 2× Heck)", 4, 42000, 7.0, 0, 2.0f, 9.0f),
+            // Ladewagen (gemähtes Gras einsammeln)
+            tool(T_LOADER, "Ladewagen 25 m³", "25 m³ ≈ 6 t", 2, 28000, 2.5, 6, 7.0f, 2.5f),
+            tool(T_LOADER, "Ladewagen 45 m³", "45 m³ ≈ 11 t", 4, 62000, 4.0, 11, 9.0f, 2.55f),
             // Mähdrescher
             harvester(H_COMBINE, "Mähdrescher Ähre 2000", 55000, 1.6, 0, 5, 20, 40, 7.5f, 3.2f, 0xFF2E7D32),
             harvester(H_COMBINE, "Mähdrescher Ähre 3500", 140000, 2.6, 0, 8, 22, 60, 8.5f, 3.5f, 0xFF388E3C),
@@ -153,9 +160,11 @@ public final class Defs {
     }
 
     // ------------------------------------------------------------ Arbeiten
-    public static final int TASK_CULTIVATE = 0, TASK_SOW = 1, TASK_FERTILIZE = 2, TASK_HARVEST = 3;
-    public static final String[] TASK_NAMES = {"Grubbern", "Säen", "Düngen", "Ernten"};
-    public static final String[] TASK_DONE = {"gegrubbert", "gesät", "gedüngt", "geerntet"};
+    public static final int TASK_CULTIVATE = 0, TASK_SOW = 1, TASK_FERTILIZE = 2, TASK_HARVEST = 3, TASK_MOW = 4;
+    public static final String[] TASK_NAMES = {"Grubbern", "Säen", "Düngen", "Ernten", "Mähen"};
+    public static final String[] TASK_DONE = {"gegrubbert", "gesät", "gedüngt", "geerntet", "gemäht"};
+    /** Reihenfolge der Arbeiten in Menüs */
+    public static final int[] TASK_ORDER = {TASK_CULTIVATE, TASK_SOW, TASK_FERTILIZE, TASK_MOW, TASK_HARVEST};
 
     // ---------------------------------------------------------------- Ställe
     public static final int S_CHICKEN = 0, S_COW = 1;

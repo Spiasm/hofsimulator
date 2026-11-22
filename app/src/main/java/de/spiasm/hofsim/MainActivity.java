@@ -41,7 +41,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
 
     private Game game;
     private MapView map;
-    private TextView moneyText, dateText, tickerText, panelTitle, panelText;
+    private TextView moneyText, dateText, tickerText, bonusText, panelTitle, panelText;
     private Button speedBtn, pauseBtn;
     private LinearLayout panel, panelButtons;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -141,7 +141,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             add(root, button("▶  Weiterspielen", GREEN, v -> {
                 Game g = load();
                 if (g == null) {
-                    toast("Spielstand konnte nicht geladen werden.");
+                    toast("Der Spielstand ist von einer älteren Version und passt nicht mehr – bitte ein neues Spiel starten.");
                     return;
                 }
                 startGame(g);
@@ -166,7 +166,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             "🗺 Karte: Mit einem Finger verschieben, mit zwei Fingern zoomen.\n\n"
                     + "🌾 Felder: Antippen zeigt Zustand und Preis. Deine Felder haben einen gelben Rand und ★.\n"
                     + "Ablauf: Grubbern → Säen → (Düngen) → wachsen lassen → Ernten → von vorn.\n"
-                    + "Gras wächst nach dem Ernten von selbst nach.\n\n"
+                    + "Gras: erst mit dem Mähwerk mähen, dann mit Ladewagen oder Feldhäcksler einsammeln. Danach wächst es von selbst nach.\n\n"
                     + "🚜 Maschinen: Antippen, dann wählen: Feldarbeit, Verkaufen oder Hinfahren – dann aufs Ziel tippen.\n"
                     + "Du kannst auch direkt auf einem Feld z. B. „Grubbern“ tippen – dann wird automatisch eine freie Maschine geschickt.\n"
                     + "Ein Helfer fährt (20 €/h + Diesel). Traktoren holen sich das passende Gerät am Hof.\n\n"
@@ -177,7 +177,10 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                     + "Ernten: Weizen = Mähdrescher, Mais & Gras = Feldhäcksler, Kartoffeln = Kartoffelroder.\n"
                     + "Ist der Bunker voll, fährt die Erntemaschine zum Hof und lädt ab.\n\n"
                     + "💶 Verkaufen: Traktor + Kipper fährt Ware vom Hof zum Landhandel (Weizen, Kartoffeln) "
-                    + "oder zur Biogasanlage (Mais, Gras). Die Preise schwanken täglich.\n\n"
+                    + "oder zur Biogasanlage (Mais, Gras). Die Preise schwanken täglich. Manchmal gibt es eine Sonder-Nachfrage – "
+                    + "dann zahlt ein Händler ein paar Tage lang deutlich mehr (Meldung oben).\n\n"
+                    + "Ein Gerät kann immer nur an einem Traktor hängen – mit einem Grubber also nur ein Feld gleichzeitig.\n\n"
+                    + "💾 Speichern: automatisch jede Minute und beim Verlassen, oder im Menü. „Weiterspielen“ lädt den Stand.\n\n"
                     + "🐔 Ställe: Hühner fressen Weizen, Kühe Gras und Mais – aus deinem Lager. Dafür gibt's jeden Tag Geld.\n\n"
                     + "⏩ Zeit: Oben rechts die Geschwindigkeit wählen. Weizen wächst ca. 110 Tage – dafür schnell vorspulen!";
 
@@ -225,6 +228,9 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         sp.leftMargin = dp(6);
         row.addView(speedBtn, sp);
         top.addView(row);
+        bonusText = text("", 13, 0xFFFFD54F, true);
+        bonusText.setVisibility(View.GONE);
+        top.addView(bonusText);
         tickerText = text("", 13, 0xFFC5E1A5, false);
         top.addView(tickerText);
         frame.addView(top, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
@@ -302,6 +308,9 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         moneyText.setText("💶 " + Game.euro(game.money));
         moneyText.setTextColor(game.money < 0 ? 0xFFFF8A80 : 0xFFFFEB3B);
         dateText.setText("📅 " + game.dateText());
+        String bt = game.bonusText();
+        bonusText.setVisibility(bt != null ? View.VISIBLE : View.GONE);
+        if (bt != null) bonusText.setText(bt);
         pauseBtn.setText(paused ? "▶" : "⏸");
         int s = Defs.SPEEDS[game.speedIdx];
         speedBtn.setText("⏩ " + s + "×");
@@ -521,7 +530,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                         .setNegativeButton("Abbrechen", null).show();
             }));
         } else {
-            for (int t = 0; t < 4; t++) {
+            for (int t : Defs.TASK_ORDER) {
                 if (!f.canDo(t)) continue;
                 final int task = t;
                 bs.add(button(taskIcon(t) + " " + Defs.TASK_NAMES[t] + (f.progress > 0 ? " (weiter)" : ""), GREEN,
@@ -543,6 +552,8 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                 return "🌱";
             case Defs.TASK_FERTILIZE:
                 return "🧪";
+            case Defs.TASK_MOW:
+                return "✂";
             default:
                 return "🌾";
         }
@@ -566,7 +577,10 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                 String e = game.checkFieldJob(c, f, task, crop);
                 if (reason == null || (e != null && !e.contains("beschäftigt"))) reason = e;
             }
-            if (task == Defs.TASK_HARVEST) {
+            if (task == Defs.TASK_HARVEST && f.crop == Defs.GRASS) {
+                if (reason == null || reason.contains("beschäftigt"))
+                    reason = "Zum Einsammeln brauchst du einen Feldhäcksler oder einen Traktor mit Ladewagen – und die müssen frei sein.";
+            } else if (task == Defs.TASK_HARVEST) {
                 int need = Defs.harvesterFor(f.crop);
                 boolean have = false;
                 for (Game.Vehicle c : game.vehicles) if (c.isHarvester() && c.m().sub == need) have = true;
@@ -604,7 +618,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         List<String> labels = new ArrayList<>();
         final List<Integer> tasks = new ArrayList<>();
         String firstErr = null;
-        for (int t = 0; t < 4; t++) {
+        for (int t : Defs.TASK_ORDER) {
             if (!f.owned || !f.canDo(t)) continue;
             int probeCrop = t == Defs.TASK_SOW ? (v.tool >= 0 && game.tool(v.tool) != null
                     && game.tool(v.tool).m().sub == Defs.T_PLANTER ? Defs.POTATO : Defs.WHEAT) : Defs.WHEAT;
@@ -670,8 +684,8 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
 
     private void showShop() {
         final String[] cats = {"🚜 Traktoren", "🌾 Mähdrescher", "🌽 Feldhäcksler", "🥔 Kartoffelroder", "⛏ Grubber",
-                "🌱 Sämaschinen", "🥔 Kartoffel-Legemaschinen", "🧪 Düngerstreuer", "🚛 Kipper", "🐄 Ställe", "🌾 Felder",
-                "💸 Etwas verkaufen"};
+                "🌱 Sämaschinen", "🥔 Kartoffel-Legemaschinen", "🧪 Düngerstreuer", "🚛 Kipper", "✂ Mähwerke", "🌿 Ladewagen",
+                "🐄 Ställe", "🌾 Felder", "💸 Etwas verkaufen"};
         new AlertDialog.Builder(this).setTitle("Kaufen – Kontostand " + Game.euro(game.money))
                 .setItems(cats, (d, which) -> {
                     switch (which) {
@@ -684,8 +698,10 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                         case 6: shopModels(cats[6], Defs.K_TOOL, Defs.T_PLANTER); break;
                         case 7: shopModels(cats[7], Defs.K_TOOL, Defs.T_SPREADER); break;
                         case 8: shopModels(cats[8], Defs.K_TOOL, Defs.T_TRAILER); break;
-                        case 9: shopStables(); break;
-                        case 10:
+                        case 9: shopModels(cats[9], Defs.K_TOOL, Defs.T_MOWER); break;
+                        case 10: shopModels(cats[10], Defs.K_TOOL, Defs.T_LOADER); break;
+                        case 11: shopStables(); break;
+                        case 12:
                             new AlertDialog.Builder(this).setMessage(
                                     "Felder kaufst du direkt auf der Karte: Feld antippen → „Kaufen“.\nPreis: ca. "
                                             + Game.euro(Defs.FIELD_PRICE_HA) + " pro Hektar.").setPositiveButton("OK", null).show();
@@ -773,6 +789,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             sb.append(String.format(Locale.GERMANY, "• %s: %.1f t\n", Defs.PRODUCT_NAMES[p], game.storage[p]));
         }
         sb.append("\n💶 Preise heute:\n");
+        if (game.bonusText() != null) sb.append(game.bonusText()).append("\n");
         for (int p = 0; p < 4; p++) {
             double pct = (game.priceFactor[p] - 1) * 100;
             sb.append(String.format(Locale.GERMANY, "• %s: %s/t (%+.0f %%) – %s\n", Defs.PRODUCT_NAMES[p],

@@ -249,6 +249,21 @@ public class MapView extends View {
             for (int i = sel.pathIdx; i < pl.size(); i++) path.lineTo(pl.get(i)[0], pl.get(i)[1]);
             c.drawPath(path, stroke);
         }
+        // abgestellte Geräte im Hof
+        int spot = 0;
+        for (Game.Tool t : game.tools) {
+            if (t.attachedTo != -1) continue;
+            int[] sp = wo.toolSpot(spot++);
+            Defs.Model m = t.m();
+            c.save();
+            c.translate((sp[0] + 0.5f) * Defs.TILE, (sp[1] + 0.5f) * Defs.TILE);
+            c.rotate(-90);
+            float mult = Math.max(1f, 10f / ((m.len + 0.6f) * scale));
+            mult = Math.min(mult, 9f / Math.max(m.wid, 1f));
+            c.scale(mult, mult);
+            drawTool(c, m, (m.len + 0.6f) / 2f, null);
+            c.restore();
+        }
         for (Game.Vehicle v : game.vehicles) {
             if (v.x < vl - 20 || v.x > vr + 20 || v.y < vt - 20 || v.y > vb + 20) continue;
             drawVehicle(c, v, v.id == selectedVehicle);
@@ -259,13 +274,17 @@ public class MapView extends View {
     }
 
     private void drawField(Canvas c, Field f, float l, float t, float rr, float b) {
-        drawCrop(c, l, t, rr, b, f.state, f.crop, f.growth, f.fertilized, f.index);
+        drawCrop(c, l, t, rr, b, f.state, f.crop, f.growth, f.fertilized, f.mowed, f.index);
         // bearbeiteter Teil
         if (f.task != -1 && f.progress > 0) {
             int st = f.state, cr = f.crop;
             double g = f.growth;
             boolean fe = f.fertilized;
+            boolean mo = f.mowed;
             switch (f.task) {
+                case Defs.TASK_MOW:
+                    mo = true;
+                    break;
                 case Defs.TASK_CULTIVATE:
                     st = Field.CULTIVATED;
                     g = 0;
@@ -281,6 +300,7 @@ public class MapView extends View {
                     fe = true;
                     break;
                 case Defs.TASK_HARVEST:
+                    mo = false;
                     if (cr == Defs.GRASS) {
                         g = 0.25;
                     } else {
@@ -299,7 +319,7 @@ public class MapView extends View {
             if (lane > 0) {
                 c.save();
                 c.clipRect(l, t, rr, t + lane * laneH);
-                drawCrop(c, l, t, rr, b, st, cr, g, fe, f.index);
+                drawCrop(c, l, t, rr, b, st, cr, g, fe, mo, f.index);
                 c.restore();
             }
             if (lane < f.h) {
@@ -309,7 +329,7 @@ public class MapView extends View {
                 float x1 = right ? (float) (l + width * frac) : rr;
                 c.save();
                 c.clipRect(x0, t + lane * laneH, x1, t + (lane + 1) * laneH);
-                drawCrop(c, l, t, rr, b, st, cr, g, fe, f.index);
+                drawCrop(c, l, t, rr, b, st, cr, g, fe, mo, f.index);
                 c.restore();
             }
         }
@@ -339,7 +359,18 @@ public class MapView extends View {
     private static final int SOIL = 0xFF7A5634;
 
     /** Feld-Aussehen je nach Zustand und Frucht. */
-    private void drawCrop(Canvas c, float l, float t, float rr, float b, int state, int crop, double g, boolean fert, int seed) {
+    private void drawCrop(Canvas c, float l, float t, float rr, float b, int state, int crop, double g, boolean fert,
+                          boolean mowed, int seed) {
+        if (mowed && state == Field.GROWING && crop == Defs.GRASS) {
+            fill.setColor(0xFF9CCC65);
+            c.drawRect(l, t, rr, b, fill);
+            stroke.setColor(0xFFB5B04A);
+            stroke.setStrokeWidth(1.8f);
+            stroke.setStrokeCap(Paint.Cap.BUTT);
+            for (float y = t + 3f; y < b; y += 6f) c.drawLine(l + 1, y, rr - 1, y, stroke);
+            stroke.setStrokeCap(Paint.Cap.ROUND);
+            return;
+        }
         float rowSp = Math.max(2.5f, 5f / scale);
         boolean detail = scale >= 1.6f;
         int base, row = 0;
@@ -601,6 +632,35 @@ public class MapView extends View {
                 c.drawCircle((b0 + b1) / 2, 0, hw * 0.55f, fill);
                 break;
             }
+            case Defs.T_MOWER: {
+                // Mähbalken quer zur Fahrtrichtung
+                fill.setColor(0xFF7CB342);
+                c.drawRect(b1, -hw, b0, hw, fill);
+                fill.setColor(0xFF33691E);
+                c.drawRect(b1 + 0.3f, -hw, b1 + 0.6f, hw, fill);
+                fill.setColor(0xFFBDBDBD);
+                for (float y = -hw + 0.3f; y < hw; y += 0.7f) c.drawCircle(b1 + 0.2f, y, 0.25f, fill);
+                break;
+            }
+            case Defs.T_LOADER: {
+                wheel(c, b1 + len * 0.35f - 0.5f, b1 + len * 0.35f + 0.5f, -hw - 0.2f, -hw + 0.3f);
+                wheel(c, b1 + len * 0.35f - 0.5f, b1 + len * 0.35f + 0.5f, hw - 0.3f, hw + 0.2f);
+                wheel(c, b1 + len * 0.35f + 0.6f, b1 + len * 0.35f + 1.6f, -hw - 0.2f, -hw + 0.3f);
+                wheel(c, b1 + len * 0.35f + 0.6f, b1 + len * 0.35f + 1.6f, hw - 0.3f, hw + 0.2f);
+                fill.setColor(0xFFC62828);
+                c.drawRect(b1, -hw, b0, hw, fill);
+                fill.setColor(0xFF8E0000);
+                c.drawRect(b1 + 0.2f, -hw + 0.2f, b0 - 0.8f, hw - 0.2f, fill);
+                fill.setColor(0xFF424242);
+                c.drawRect(b0 - 0.8f, -hw - 0.1f, b0 - 0.2f, hw + 0.1f, fill); // Pick-up
+                if (v != null && v.load > 0 && v.loadProduct >= 0) {
+                    float f = (float) Math.min(1, v.load / m.cap);
+                    fill.setColor(PRODUCT_COLOR[v.loadProduct]);
+                    r.set(b1 + 0.2f, -(hw - 0.2f) * f, b0 - 0.8f, (hw - 0.2f) * f);
+                    c.drawRoundRect(r, 0.8f, 0.8f, fill);
+                }
+                break;
+            }
             default: { // Kipper
                 int axles = m.cap >= 33 ? 3 : m.cap >= 20 ? 2 : 1;
                 for (int a = 0; a < axles; a++) {
@@ -612,7 +672,7 @@ public class MapView extends View {
                 c.drawRect(b1, -hw, b0, hw, fill);
                 fill.setColor(0xFF33691E);
                 c.drawRect(b1 + 0.2f, -hw + 0.2f, b0 - 0.2f, hw - 0.2f, fill);
-                if (v.load > 0 && v.loadProduct >= 0) {
+                if (v != null && v.load > 0 && v.loadProduct >= 0) {
                     float f = (float) Math.min(1, v.load / m.cap);
                     fill.setColor(PRODUCT_COLOR[v.loadProduct]);
                     r.set(b1 + 0.2f, -(hw - 0.2f) * f, b0 - 0.2f, (hw - 0.2f) * f);

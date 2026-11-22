@@ -14,6 +14,8 @@ public class Field {
     public int crop = Defs.WHEAT;
     public double growth;
     public boolean fertilized;
+    /** Gras gemäht und liegt im Schwad */
+    public boolean mowed;
     /** Fremde Felder: Tage seit Ernte */
     public double idleDays;
 
@@ -53,8 +55,10 @@ public class Field {
                 return state == CULTIVATED;
             case Defs.TASK_FERTILIZE:
                 return state == GROWING && !fertilized && growth < Defs.FERTILIZE_UNTIL;
+            case Defs.TASK_MOW:
+                return ripe() && crop == Defs.GRASS && !mowed;
             case Defs.TASK_HARVEST:
-                return ripe();
+                return ripe() && (crop != Defs.GRASS || mowed);
             default:
                 return false;
         }
@@ -70,7 +74,8 @@ public class Field {
                 s = "gegrubbert – bereit zum Säen";
                 break;
             default:
-                if (growth >= 1) s = Defs.CROP_NAMES[crop] + " – erntereif!";
+                if (growth >= 1 && crop == Defs.GRASS) s = mowed ? "Gras gemäht – bereit zum Einsammeln" : "Gras – bereit zum Mähen!";
+                else if (growth >= 1) s = Defs.CROP_NAMES[crop] + " – erntereif!";
                 else s = Defs.CROP_NAMES[crop] + " – wächst (" + Math.round(growth * 100) + " %)";
                 if (fertilized) s += ", gedüngt";
         }
@@ -85,6 +90,7 @@ public class Field {
         switch (task) {
             case Defs.TASK_CULTIVATE:
                 state = CULTIVATED;
+                mowed = false;
                 fertilized = false;
                 growth = 0;
                 break;
@@ -97,7 +103,11 @@ public class Field {
             case Defs.TASK_FERTILIZE:
                 fertilized = true;
                 break;
+            case Defs.TASK_MOW:
+                mowed = true;
+                break;
             case Defs.TASK_HARVEST:
+                mowed = false;
                 if (crop == Defs.GRASS) {
                     state = GROWING;
                     growth = 0.25;
