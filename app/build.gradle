@@ -1,0 +1,39 @@
+plugins {
+    id 'com.android.application'
+}
+
+def runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInteger()
+
+android {
+    namespace 'de.spiasm.hofsim'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "de.spiasm.hofsim"
+        minSdk 24
+        targetSdk 34
+        versionCode runNumber
+        versionName "1.0." + runNumber
+    }
+
+    signingConfigs {
+        fixed {
+            storeFile file('hofsim.keystore')
+            storePassword 'hofsim'
+            keyAlias 'hofsim'
+            keyPassword 'hofsim'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.fixed
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        encoding 'UTF-8'
+    }
+}
