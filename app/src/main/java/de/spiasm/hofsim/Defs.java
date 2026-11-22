@@ -16,7 +16,7 @@ public final class Defs {
     public static final String[] CROP_NAMES = {"Wiese/Gras", "Weizen", "Kartoffeln", "Mais"};
     public static final String[] PRODUCT_NAMES = {"Gras-Silage", "Weizen", "Kartoffeln", "Mais-Silage"};
     /** Wachstumsdauer in Tagen */
-    public static final double[] GROW_DAYS = {45, 110, 120, 130};
+    public static final double[] GROW_DAYS = {12, 28, 30, 32};
     /** Ertrag in t/ha (gedüngt; ungedüngt 80 %) */
     public static final double[] YIELD = {9, 8.5, 42, 48};
     /** Saatgut €/ha */

@@ -130,6 +130,7 @@ public class Game {
         g.addTool(Defs.modelByName("Sämaschine 3 m"));
         g.addTool(Defs.modelByName("Düngerstreuer 800 l"));
         g.addTool(Defs.modelByName("Kipper 10 t"));
+        g.addVehicle(Defs.modelByName("Mähdrescher Ähre 2000"));
         g.stables[Defs.S_CHICKEN] = true;
         g.world.buildStable(Defs.S_CHICKEN);
         g.storage[Defs.WHEAT] = 12;
@@ -768,7 +769,7 @@ public class Game {
     }
 
     public String sellTool(Tool t) {
-        if (t.attachedTo != -1) return "Das Gerät ist gerade im Einsatz.";
+        if (t.attachedTo != -1 || t.reservedBy != -1) return "Das Gerät ist gerade im Einsatz.";
         money += t.m().price * 0.5;
         tools.remove(t);
         return null;

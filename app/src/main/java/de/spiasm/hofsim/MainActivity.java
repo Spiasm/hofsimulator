@@ -182,7 +182,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                     + "Ein Gerät kann immer nur an einem Traktor hängen – mit einem Grubber also nur ein Feld gleichzeitig.\n\n"
                     + "💾 Speichern: automatisch jede Minute und beim Verlassen, oder im Menü. „Weiterspielen“ lädt den Stand.\n\n"
                     + "🐔 Ställe: Hühner fressen Weizen, Kühe Gras und Mais – aus deinem Lager. Dafür gibt's jeden Tag Geld.\n\n"
-                    + "⏩ Zeit: Oben rechts die Geschwindigkeit wählen. Weizen wächst ca. 110 Tage – dafür schnell vorspulen!";
+                    + "⏩ Zeit: Oben rechts die Geschwindigkeit wählen. Weizen wächst ca. 4 Wochen – bei 6000× sind das gut 6 Minuten.";
 
     private void showHelp() {
         new AlertDialog.Builder(this).setTitle("Anleitung").setMessage(HELP).setPositiveButton("OK", null).show();
@@ -823,19 +823,52 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     }
 
     private void showFleet() {
-        final List<Game.Vehicle> list = new ArrayList<>(game.vehicles);
-        String[] items = new String[list.size()];
-        for (int i = 0; i < list.size(); i++) {
-            Game.Vehicle v = list.get(i);
+        final List<Object> things = new ArrayList<>();
+        List<String> items = new ArrayList<>();
+        for (Game.Vehicle v : game.vehicles) {
             Game.Tool t = game.tool(v.tool);
-            items[i] = v.name() + (v.isTractor() ? " (Stufe " + v.m().level + ")" : "") + "\n   " + v.status
-                    + (t != null ? " • " + t.m().name : "");
+            things.add(v);
+            items.add("🚜 " + v.name() + (v.isTractor() ? " (Stufe " + v.m().level + ")" : "") + "\n      " + v.status
+                    + (t != null ? " • mit " + t.m().name : ""));
         }
-        new AlertDialog.Builder(this).setTitle("Fuhrpark (antippen = auf der Karte zeigen)")
-                .setItems(items, (d, which) -> {
-                    Game.Vehicle v = list.get(which);
-                    map.centerOn(v.x, v.y);
-                    showVehiclePanel(v);
+        for (Game.Tool t : game.tools) {
+            String where;
+            Game.Vehicle at = game.vehicle(t.attachedTo);
+            Game.Vehicle res = game.vehicle(t.reservedBy);
+            if (at != null) where = "hängt an " + at.name();
+            else if (res != null) where = "reserviert für " + res.name();
+            else where = "steht am Hof";
+            things.add(t);
+            items.add("🔧 " + t.m().name + " (braucht Stufe " + t.m().level + ")\n      " + where);
+        }
+        new AlertDialog.Builder(this).setTitle("Fuhrpark: " + game.vehicles.size() + " Fahrzeuge, " + game.tools.size() + " Geräte")
+                .setItems(items.toArray(new String[0]), (d, which) -> {
+                    Object o = things.get(which);
+                    if (o instanceof Game.Vehicle) {
+                        Game.Vehicle v = (Game.Vehicle) o;
+                        map.centerOn(v.x, v.y);
+                        showVehiclePanel(v);
+                    } else {
+                        showToolInfo((Game.Tool) o);
+                    }
+                }).show();
+    }
+
+    private void showToolInfo(final Game.Tool t) {
+        Game.Vehicle at = game.vehicle(t.attachedTo);
+        if (at != null) {
+            map.centerOn(at.x, at.y);
+        } else {
+            int[] h = game.world.hof;
+            map.centerOn((h[0] + h[2] / 2f) * Defs.TILE, (h[1] + h[3] / 2f) * Defs.TILE);
+        }
+        String msg = t.m().name + "\n" + t.m().info + "\n\n" + (at != null ? "Hängt gerade an " + at.name() + "." : "Steht am Hof.");
+        new AlertDialog.Builder(this).setTitle("🔧 Gerät").setMessage(msg)
+                .setPositiveButton("OK", null)
+                .setNegativeButton("Verkaufen (" + Game.euro(t.m().price * 0.5) + ")", (d, w) -> {
+                    String err = game.sellTool(t);
+                    if (err != null) toast(err);
+                    else message("💸 " + t.m().name + " verkauft.");
                 }).show();
     }
 
