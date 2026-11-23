@@ -801,7 +801,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         }
         if (task == Defs.TASK_SOW && f.progress <= 0) {
             chooseCrop(f, crop -> autoTaskCrop(f, task, crop));
-        } else if (task == Defs.TASK_FERTILIZE && f.progress <= 0) {
+        } else if (task == Defs.TASK_FERTILIZE) {
             chooseFert(f, mode -> autoTaskCrop(f, task, mode));
         } else {
             autoTaskCrop(f, task, f.taskCrop >= 0 ? f.taskCrop : Defs.WHEAT);
@@ -842,11 +842,15 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     }
 
     private void chooseFert(final Field f, final CropCallback cb) {
+        double rest = f.progress > 0 ? 1 - f.progress : 1;
         String[] items = {
-                "🧪 Kunstdünger – " + Game.euro(Defs.FERTILIZER_COST * f.hectares()) + " (Düngerstreuer)",
+                "🧪 Kunstdünger – " + Game.euro(f.progress > 0 && f.taskCrop == Defs.FERT_MINERAL ? 0 : Defs.FERTILIZER_COST * f.hectares() * rest)
+                        + " (Düngerstreuer)",
                 String.format(Locale.GERMANY, "💧 Gülle – kostenlos, %.0f m³ in den Ställen (Güllefass)", game.manureAvailable(Defs.FERT_SLURRY)),
                 String.format(Locale.GERMANY, "💩 Mist – kostenlos, %.0f t in den Ställen (Miststreuer)", game.manureAvailable(Defs.FERT_DUNG))};
-        new AlertDialog.Builder(this).setTitle("Womit düngen auf Feld " + f.number + "?")
+        new AlertDialog.Builder(this).setTitle(f.progress > 0
+                        ? String.format(Locale.GERMANY, "Rest von Feld %d düngen (%.0f %% fertig) – womit?", f.number, f.progress * 100)
+                        : "Womit düngen auf Feld " + f.number + "?")
                 .setItems(items, (d, which) -> cb.onCrop(which == 0 ? Defs.FERT_MINERAL : which == 1 ? Defs.FERT_SLURRY : Defs.FERT_DUNG))
                 .show();
     }
@@ -907,7 +911,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                             if (err != null) toast(err);
                             showVehiclePanel(v);
                         });
-                    } else if (task == Defs.TASK_FERTILIZE && f.progress <= 0) {
+                    } else if (task == Defs.TASK_FERTILIZE) {
                         chooseFert(f, mode -> {
                             String err = act("field", "v", v.id, "f", f.index, "t", task, "c", mode);
                             if (err != null) toast(err);

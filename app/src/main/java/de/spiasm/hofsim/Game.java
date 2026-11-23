@@ -1360,8 +1360,8 @@ public class Game {
         if (manure && v.load < 0.01) {
             int src = manureSource(s.c);
             if (src < 0) {
-                msg("⚠ Keine " + Defs.FERT_NAMES[s.c] + " mehr am Stall – Feld " + f.number + " ist zu "
-                        + Math.round(f.progress * 100) + " % gedüngt. Später weitermachen.");
+                msg("⚠ " + (s.c == Defs.FERT_SLURRY ? "Keine Gülle" : "Kein Mist") + " mehr am Stall – Feld " + f.number + " ist zu "
+                        + Math.round(f.progress * 100) + " % gedüngt. Feld antippen → „Düngen“, dann z. B. mit Kunstdünger fertig machen.");
                 abort(v, null);
                 sendHomeSilently(v);
                 return 0;
@@ -1581,7 +1581,12 @@ public class Game {
     }
 
     public double taskCost(Field f, int task, int crop) {
-        if (f.progress > 0) return 0;
+        if (f.progress > 0) {
+            // Rest mit Kunstdünger, nachdem vorher Gülle/Mist ausging: nur den Rest bezahlen
+            if (task == Defs.TASK_FERTILIZE && crop == Defs.FERT_MINERAL && f.taskCrop != Defs.FERT_MINERAL)
+                return Defs.FERTILIZER_COST * f.hectares() * (1 - f.progress);
+            return 0;
+        }
         if (task == Defs.TASK_SOW) return Defs.SEED_COST[crop] * f.hectares();
         if (task == Defs.TASK_FERTILIZE && crop == Defs.FERT_MINERAL) return Defs.FERTILIZER_COST * f.hectares();
         return 0;
