@@ -40,6 +40,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     private static final int PICK_NONE = 0, PICK_FIELD = 1, PICK_GOTO = 2, PICK_WIND = 3, PICK_FOREST = 4;
     private final Ambience sound = new Ambience();
     private boolean soundOn = true;
+    private float volAmbient = 0.8f, volMachines = 0.8f;
     private int panelForest = -1;
 
     private Game game;
@@ -81,7 +82,9 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     }
 
     private void updateSound() {
-        if (!soundOn || paused || map == null) {
+        sound.volAmbient = volAmbient;
+        sound.volMachines = volMachines;
+        if (!soundOn || (volAmbient <= 0 && volMachines <= 0) || paused || map == null) {
             sound.stop();
             return;
         }
@@ -256,7 +259,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                     + "🏠 Hof antippen: 3D-Ansicht mit all deinen Maschinen, dazu Lager, Verkaufen und Futter.\n\n"
                     + "🌦 Wetter: Sonne, Wolken, Regen und im Winter Schnee – nur zum Anschauen, die Ernte leidet nicht. "
                     + "PV und Windräder zeigen ihre aktuelle Leistung in %.\n\n"
-                    + "🔊 Geräusche: im Menü ein- und ausschalten.\n\n"
+                    + "🔊 Geräusche: im Menü ein- und ausschalten, Lautstärke für Umgebung und Maschinen getrennt einstellen.\n\n"
                     + "🔥 Bei trockenem Wetter kann ein Stoppelfeld brennen – die Feuerwehr kommt und löscht.\n\n"
                     + "🎨 Grafik: Im Menü zwischen Einfach, Mittel und Hoch umschalten.\n\n"
                     + "💾 Speichern: automatisch jede Minute, beim Verlassen und im Menü.\n\n"
@@ -278,6 +281,8 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         map.tapListener = this;
         applyDetail(getPreferences(MODE_PRIVATE).getInt("detail", 1));
         soundOn = getPreferences(MODE_PRIVATE).getBoolean("sound", true);
+        volAmbient = getPreferences(MODE_PRIVATE).getFloat("volAmbient", 0.8f);
+        volMachines = getPreferences(MODE_PRIVATE).getFloat("volMachines", 0.8f);
         int[] h = game.world.hof;
         map.centerOn((h[0] + h[2] / 2f) * Defs.TILE, (h[1] + h[3] / 2f) * Defs.TILE + 40);
         frame.addView(map, new FrameLayout.LayoutParams(-1, -1));
@@ -1583,17 +1588,70 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         getPreferences(MODE_PRIVATE).edit().putInt("detail", d).apply();
     }
 
+    private void showVolume() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(12), dp(20), dp(4));
+        final android.widget.CheckBox on = new android.widget.CheckBox(this);
+        on.setText("Geräusche an");
+        on.setTextSize(16);
+        on.setChecked(soundOn);
+        box.addView(on);
+        final TextView la = text("", 15, 0xFF333333, false);
+        final TextView lm = text("", 15, 0xFF333333, false);
+        final android.widget.SeekBar sa = new android.widget.SeekBar(this), sm = new android.widget.SeekBar(this);
+        sa.setMax(100);
+        sm.setMax(100);
+        sa.setProgress(Math.round(volAmbient * 100));
+        sm.setProgress(Math.round(volMachines * 100));
+        Runnable upd = () -> {
+            la.setText("🐦 Umgebung (Vögel, Wind, Dorf, Tiere, Regen): " + sa.getProgress() + " %");
+            lm.setText("🚜 Maschinen (Motoren, Feuerwehr): " + sm.getProgress() + " %");
+        };
+        upd.run();
+        android.widget.SeekBar.OnSeekBarChangeListener l = new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(android.widget.SeekBar b, int p, boolean user) {
+                volAmbient = sa.getProgress() / 100f;
+                volMachines = sm.getProgress() / 100f;
+                upd.run();
+                updateSound();
+            }
+
+            @Override
+            public void onStartTrackingTouch(android.widget.SeekBar b) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(android.widget.SeekBar b) {
+            }
+        };
+        sa.setOnSeekBarChangeListener(l);
+        sm.setOnSeekBarChangeListener(l);
+        on.setOnCheckedChangeListener((b, c) -> {
+            soundOn = c;
+            updateSound();
+        });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(14);
+        box.addView(la, lp);
+        box.addView(sa);
+        box.addView(lm, lp);
+        box.addView(sm);
+        new AlertDialog.Builder(this).setTitle("🔊 Geräusche").setView(box)
+                .setPositiveButton("OK", null)
+                .setOnDismissListener(d -> getPreferences(MODE_PRIVATE).edit().putBoolean("sound", soundOn)
+                        .putFloat("volAmbient", volAmbient).putFloat("volMachines", volMachines).apply())
+                .show();
+    }
+
     private void showGameMenu() {
         String[] names = {"Einfach", "Mittel", "Hoch"};
         String[] items = {"💾 Speichern", "🎨 Grafik: " + names[map.detail], "❓ Anleitung", "🏠 Karte zum Hof", "🚪 Speichern & zum Hauptmenü",
-                soundOn ? "🔊 Geräusche: an (tippen zum Ausschalten)" : "🔇 Geräusche: aus (tippen zum Einschalten)"};
+                soundOn ? "🔊 Geräusche & Lautstärke" : "🔇 Geräusche: aus"};
         new AlertDialog.Builder(this).setTitle("Menü").setItems(items, (d, which) -> {
-            if (which == 5) {
-                soundOn = !soundOn;
-                getPreferences(MODE_PRIVATE).edit().putBoolean("sound", soundOn).apply();
-                if (!soundOn) sound.stop();
-                message(soundOn ? "🔊 Geräusche an" : "🔇 Geräusche aus");
-            } else if (which == 0) save(true);
+            if (which == 5) showVolume();
+            else if (which == 0) save(true);
             else if (which == 1) {
                 String[] opts = {"Einfach – für ältere Handys (schlichte Felder, kein Verkehr)",
                         "Mittel – mit Verkehr", "Hoch – mit Schatten, Staub und Tieren an den Ställen"};

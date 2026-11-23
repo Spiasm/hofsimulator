@@ -15,6 +15,8 @@ public class Ambience implements Runnable {
     public volatile float birds, leaves, village, rain, engine, siren, horn;
     public final float[] animals = new float[4]; // Huhn, Kuh, Schwein, Schaf
     public volatile float wind = 0.5f;
+    /** Lautstärke-Regler 0..1: Umgebung (Natur, Dorf, Tiere, Regen) und Maschinen (Motoren, Feuerwehr) */
+    public volatile float volAmbient = 0.8f, volMachines = 0.8f;
 
     private volatile boolean running;
     private Thread thread;
@@ -119,8 +121,11 @@ public class Ambience implements Runnable {
         for (int i = 0; i < 4; i++) cAnimals[i] += (animals[i] - cAnimals[i]) * k;
     }
 
+    private float machOut;
+
     private float sample() {
         float out = 0;
+        machOut = 0;
         float n = noise();
 
         // Wind in den Blättern: helles Rauschen mit Böen
@@ -190,7 +195,7 @@ public class Ambience implements Runnable {
             engPhase += (36 + 4 * (float) Math.sin(engPhase * 0.002)) / RATE;
             float saw = 2 * (engPhase - (float) Math.floor(engPhase)) - 1;
             lpEngine += 0.03f * (saw + n * 0.4f - lpEngine);
-            out += lpEngine * 0.35f * cEngine;
+            machOut += lpEngine * 0.35f * cEngine;
         }
 
         // Tiere
@@ -249,7 +254,7 @@ public class Ambience implements Runnable {
             sirenT += 1f / RATE;
             float f = 450 + 650 * (0.5f - 0.5f * (float) Math.cos(2 * Math.PI * sirenT / 6));
             chirpPhaseSiren += f / RATE;
-            out += (float) Math.sin(chirpPhaseSiren * 2 * Math.PI) * 0.22f * cSiren;
+            machOut += (float) Math.sin(chirpPhaseSiren * 2 * Math.PI) * 0.22f * cSiren;
         }
 
         // Martinshorn: Ta-tü-ta-ta
@@ -258,9 +263,10 @@ public class Ambience implements Runnable {
             float f = ((int) (hornT / 0.6f)) % 2 == 0 ? 440f : 587f;
             hornPhase += f / RATE;
             float ph = hornPhase * 2 * (float) Math.PI;
-            out += ((float) Math.sin(ph) + 0.35f * (float) Math.sin(3 * ph) + 0.15f * (float) Math.sin(5 * ph)) * 0.16f * cHorn;
+            machOut += ((float) Math.sin(ph) + 0.35f * (float) Math.sin(3 * ph) + 0.15f * (float) Math.sin(5 * ph)) * 0.16f * cHorn;
         }
-        return out;
+        float va = volAmbient, vm = volMachines;
+        return out * va * va * 1.4f + machOut * vm * vm * 1.4f;
     }
 
     private float chirpPhaseSiren, hornPhase;
