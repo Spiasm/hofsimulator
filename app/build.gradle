@@ -18,10 +18,11 @@ android {
 
     signingConfigs {
         fixed {
-            storeFile file('hofsim.keystore')
-            storePassword 'hofsim'
-            keyAlias 'hofsim'
-            keyPassword 'hofsim'
+            // Der Schlüssel liegt geheim bei GitHub (Settings → Secrets) und wird nur beim Bauen hineingelegt
+            storeFile file('release.keystore')
+            storePassword System.getenv('KEYSTORE_PASS')
+            keyAlias 'app'
+            keyPassword System.getenv('KEYSTORE_PASS')
         }
     }
 
