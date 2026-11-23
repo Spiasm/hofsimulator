@@ -83,14 +83,34 @@ public class Hof3DView extends View {
         List<Object> things = new ArrayList<>();
         things.addAll(game.vehicles);
         for (Game.Tool t : game.tools) if (t.attachedTo == -1) things.add(t);
-        int perRow = 6;
-        for (int i = 0; i < things.size(); i++) {
-            int row = i / perRow, col = i % perRow;
-            float x = -20 + col * 8.5f + (row % 2) * 3;
-            float z = -4 + row * 9;
-            Object o = things.get(i);
-            if (o instanceof Game.Vehicle) addVehicle((Game.Vehicle) o, x, z);
-            else addTool(((Game.Tool) o).m(), x, z + 1, null);
+        // Reihen: jedes Fahrzeug/Gerät bekommt so viel Platz, wie es lang ist (schräg gestellt)
+        float rowStart = -24, rowEnd = 34, x = rowStart, z = -3;
+        int row = 0;
+        for (Object o : things) {
+            float len;
+            if (o instanceof Game.Vehicle) {
+                Game.Vehicle v = (Game.Vehicle) o;
+                Game.Tool t = game.tool(v.tool);
+                len = (v.isTractor() ? v.m().len : Math.max(6, v.m().len)) + (t != null ? Math.min(8, t.m().len) + 0.6f : 0);
+            } else {
+                len = Math.min(8, ((Game.Tool) o).m().len);
+            }
+            float w = len * 0.94f + 2.5f;
+            if (x + w > rowEnd && x > rowStart) {
+                row++;
+                x = rowStart + (row % 2) * 2;
+                z += 9;
+            }
+            if (o instanceof Game.Vehicle) {
+                Game.Vehicle v = (Game.Vehicle) o;
+                Game.Tool t = game.tool(v.tool);
+                float toolPart = t != null ? Math.min(8, t.m().len) + 0.6f : 0;
+                // Fahrzeug vorne, Gerät dahinter
+                addVehicle(v, x + toolPart + (len - toolPart) / 2, z);
+            } else {
+                addTool(((Game.Tool) o).m(), x + len / 2, z + 1, null);
+            }
+            x += w;
         }
     }
 
@@ -108,7 +128,10 @@ public class Hof3DView extends View {
             boxes.add(new Box(x - 0.6f, z, 0.6f, 1.6f, 2.2f, 1.8f, rot, mix(col, 0xFF90CAF9, 0.35f))); // Kabine
             wheels(x, z, rot, m.len * 0.9f, 1.25f);
             Game.Tool t = game.tool(v.tool);
-            if (t != null) addTool(t.m(), x - 3.5f * (float) Math.cos(rot), z - 3.5f * (float) Math.sin(rot), null);
+            if (t != null) {
+                float dist = m.len / 2 + Math.min(8, t.m().len) / 2 + 0.6f;
+                addTool(t.m(), x - dist * (float) Math.cos(rot), z - dist * (float) Math.sin(rot), null);
+            }
         } else if (v.isForestry()) {
             boxes.add(new Box(x, z, 0.8f, 6.0f, 1.0f, 2.4f, rot, col));
             boxes.add(new Box(x + 1.6f, z, 1.8f, 1.6f, 1.8f, 1.8f, rot, mix(col, 0xFF90CAF9, 0.35f)));
@@ -127,10 +150,198 @@ public class Hof3DView extends View {
         spots.add(sp);
     }
 
+    // --------------------------------------------------- Geräte in 3D
+
+    private float px, pz, prot;
+
+    /** Teil eines Geräts: la = nach vorne, lb = zur Seite (lokal) */
+    private void part(float la, float lb, float y0, float sa, float sy, float sb, int color) {
+        float c = (float) Math.cos(prot), s = (float) Math.sin(prot);
+        boxes.add(new Box(px + la * c - lb * s, pz + la * s + lb * c, y0, sa, sy, sb, prot, color));
+    }
+
+    private void wheel(float la, float lb, float r, float w) {
+        part(la, lb, 0, r * 2, r * 2, w, 0xFF212121);
+        part(la, lb + (lb > 0 ? w * 0.05f : -w * 0.05f), r * 0.6f, r * 0.9f, r * 0.8f, w * 1.02f, 0xFF9E9E9E);
+    }
+
+    private void axle(float la, float track, float r, float w) {
+        wheel(la, -track / 2, r, w);
+        wheel(la, track / 2, r, w);
+    }
+
+    private static int toolColor(int sub) {
+        switch (sub) {
+            case Defs.T_GRUBBER: return 0xFFD84315;
+            case Defs.T_SEEDER: return 0xFF1565C0;
+            case Defs.T_PLANTER: return 0xFFEF6C00;
+            case Defs.T_VEGPLANT: return 0xFF00897B;
+            case Defs.T_SPREADER: return 0xFF2E7D32;
+            case Defs.T_MOWER: return 0xFFC62828;
+            case Defs.T_LOADER: return 0xFF2E7D32;
+            case Defs.T_SLURRY: return 0xFF388E3C;
+            case Defs.T_MANURE: return 0xFFB71C1C;
+            case Defs.T_TREEPLANT: return 0xFF6D4C41;
+            case Defs.T_FWDTRAILER:
+            case Defs.T_LOGTRAILER: return 0xFF546E7A;
+            case Defs.T_CHIPPER: return 0xFFF57C00;
+            default: return 0xFFC62828; // Kipper
+        }
+    }
+
     private void addTool(Defs.Model m, float x, float z, Game.Vehicle v) {
-        float len = Math.min(6, m.len), wid = Math.min(4.5f, m.wid);
-        int col = m.color != 0 ? m.color : 0xFF9E9E9E;
-        boxes.add(new Box(x, z, 0.5f, len, 1.2f, wid, 0.35f, col));
+        px = x;
+        pz = z;
+        prot = 0.35f;
+        float L = Math.min(8, m.len), W = Math.min(6, m.wid);
+        int col = m.color != 0 ? m.color : toolColor(m.sub);
+        int steel = 0xFF616161, dark = 0xFF37474F;
+        float hl = L / 2;
+        // Deichsel / Dreipunkt vorne
+        part(hl + 0.4f, 0, 0.5f, 1.2f, 0.18f, 0.18f, dark);
+        switch (m.sub) {
+            case Defs.T_GRUBBER: {
+                part(hl * 0.5f, 0, 0.9f, 0.3f, 0.3f, W, col);              // vorderer Rahmen
+                part(-hl * 0.1f, 0, 0.9f, 0.3f, 0.3f, W, col);             // hinterer Rahmen
+                part(hl * 0.2f, 0, 1.0f, L * 0.7f, 0.25f, 0.3f, col);      // Längsträger
+                int n = Math.max(4, (int) (W / 0.6f));
+                for (int k = 0; k < n; k++) {
+                    float b = -W / 2 + (k + 0.5f) * W / n;
+                    part((k % 2 == 0 ? hl * 0.5f : -hl * 0.1f), b, 0.05f, 0.15f, 0.85f, 0.12f, steel); // Zinken
+                }
+                part(-hl * 0.75f, 0, 0.1f, 0.6f, 0.6f, W * 0.98f, 0xFF424242); // Packerwalze
+                break;
+            }
+            case Defs.T_SEEDER: {
+                part(0, 0, 1.0f, L * 0.5f, 1.0f, W * 0.92f, col);          // Saatkasten
+                part(0, 0, 2.0f, L * 0.52f, 0.12f, W * 0.95f, mix(col, 0xFFFFFFFF, 0.3f)); // Deckel
+                part(-hl * 0.6f, 0, 0.2f, 0.3f, 0.5f, W, steel);           // Säschare
+                int n = Math.max(6, (int) (W / 0.4f));
+                for (int k = 0; k < n; k++) part(-hl * 0.6f, -W / 2 + (k + 0.5f) * W / n, 0, 0.1f, 0.3f, 0.06f, dark);
+                part(hl * 0.5f, 0, 0.3f, 0.5f, 0.5f, W, 0xFF424242);       // Walze vorne
+                break;
+            }
+            case Defs.T_PLANTER: {
+                part(hl * 0.1f, 0, 1.1f, L * 0.55f, 1.3f, W * 0.85f, col); // Kartoffelbunker
+                part(hl * 0.1f, 0, 2.4f, L * 0.6f, 0.1f, W * 0.9f, mix(col, 0xFF000000, 0.2f));
+                int rows = m.wid > 3 ? 4 : 2;
+                for (int k = 0; k < rows; k++) {
+                    float b = -W / 2 + (k + 0.5f) * W / rows;
+                    part(-hl * 0.6f, b, 0, 1.4f, 0.5f, 0.45f, steel);     // Häufelkörper
+                }
+                axle(hl * 0.1f, W * 0.95f, 0.45f, 0.35f);
+                break;
+            }
+            case Defs.T_VEGPLANT: {
+                part(hl * 0.3f, 0, 0.8f, 0.3f, 0.3f, W, steel);            // Rahmen
+                int rows = m.wid > 4 ? 8 : 4;
+                for (int k = 0; k < rows; k++) {
+                    float b = -W / 2 + (k + 0.5f) * W / rows;
+                    part(-hl * 0.2f, b, 0.3f, 0.6f, 0.5f, 0.35f, col);     // Pflanzaggregat
+                    part(0.2f, b, 1.0f, 0.8f, 0.1f, 0.45f, 0xFF66BB6A);    // Tablett mit Jungpflanzen
+                    part(-hl * 0.6f, b, 0.6f, 0.35f, 0.5f, 0.3f, 0xFF455A64); // Sitz
+                }
+                axle(-hl * 0.3f, W * 0.9f, 0.35f, 0.25f);
+                break;
+            }
+            case Defs.T_SPREADER: {
+                float big = Math.min(W, 2.4f);
+                part(0, 0, 0.6f, L * 0.45f, 0.5f, big * 0.5f, col);         // Trichter unten
+                part(0, 0, 1.1f, L * 0.6f, 0.8f, big * 0.85f, col);         // Trichter oben
+                part(0, 0, 1.9f, L * 0.62f, 0.08f, big * 0.88f, mix(col, 0xFFFFFFFF, 0.25f));
+                part(-hl * 0.5f, -0.4f, 0.4f, 0.6f, 0.08f, 0.6f, steel);    // Streuscheiben
+                part(-hl * 0.5f, 0.4f, 0.4f, 0.6f, 0.08f, 0.6f, steel);
+                break;
+            }
+            case Defs.T_MOWER: {
+                part(0, 0, 0.1f, L * 0.5f, 0.25f, W, steel);               // Mähbalken
+                int segs = Math.max(2, (int) (W / 1.6f));
+                for (int k = 0; k < segs; k++) {
+                    float b = -W / 2 + (k + 0.5f) * W / segs;
+                    part(0, b, 0.35f, L * 0.55f, 0.55f, W / segs * 0.9f, col); // Schutzhauben
+                }
+                part(hl * 0.4f, 0, 0.9f, 0.6f, 0.5f, 0.6f, dark);           // Getriebe
+                break;
+            }
+            case Defs.T_LOADER: {
+                axle(-hl * 0.2f, W * 0.9f, 0.55f, 0.4f);
+                axle(-hl * 0.2f + 1.3f, W * 0.9f, 0.55f, 0.4f);
+                part(-hl * 0.05f, 0, 1.0f, L * 0.85f, 0.25f, W * 0.95f, dark); // Boden
+                part(-hl * 0.05f, -W * 0.46f, 1.25f, L * 0.85f, 2.0f, 0.1f, col); // Seitenwände
+                part(-hl * 0.05f, W * 0.46f, 1.25f, L * 0.85f, 2.0f, 0.1f, col);
+                part(-hl * 0.9f, 0, 1.25f, 0.1f, 2.0f, W * 0.95f, col);    // Heckklappe
+                for (float a = -hl * 0.7f; a < hl * 0.7f; a += 1.2f) part(a, 0, 3.25f, 0.12f, 0.12f, W * 0.95f, steel); // Bügel oben
+                part(hl * 0.85f, 0, 0.2f, 0.8f, 0.6f, W * 0.8f, steel);    // Pick-up
+                break;
+            }
+            case Defs.T_SLURRY: {
+                axle(-hl * 0.15f, W * 0.95f, 0.7f, 0.5f);
+                if (m.cap >= 14) axle(-hl * 0.15f + 1.5f, W * 0.95f, 0.7f, 0.5f);
+                float tw = Math.min(W, 2.4f);
+                // runder Tank aus Scheiben
+                part(0, 0, 0.9f, L * 0.9f, 1.8f, tw * 0.6f, col);
+                part(0, 0, 1.1f, L * 0.9f, 1.4f, tw * 0.85f, mix(col, 0xFF000000, 0.08f));
+                part(0, 0, 1.25f, L * 0.88f, 1.1f, tw, mix(col, 0xFF000000, 0.15f));
+                part(0, 0, 2.7f, 0.8f, 0.3f, 0.8f, dark);                   // Dom
+                float boom = m.cap >= 20 ? 6f : 3f;
+                part(-hl * 0.95f, 0, 0.6f, 0.3f, 0.3f, boom * 2, steel);    // Verteiler
+                break;
+            }
+            case Defs.T_MANURE: {
+                axle(0, W * 0.95f, 0.65f, 0.45f);
+                if (m.cap >= 12) axle(1.4f, W * 0.95f, 0.65f, 0.45f);
+                part(0, 0, 1.0f, L * 0.85f, 0.2f, W * 0.95f, dark);
+                part(0, -W * 0.46f, 1.2f, L * 0.85f, 1.2f, 0.1f, col);
+                part(0, W * 0.46f, 1.2f, L * 0.85f, 1.2f, 0.1f, col);
+                part(hl * 0.42f, 0, 1.2f, 0.1f, 1.6f, W * 0.95f, col);
+                part(0, 0, 1.2f, L * 0.75f, 0.9f, W * 0.85f, 0xFF4E342E); // Mist
+                part(-hl * 0.45f, -W * 0.2f, 0.8f, 0.5f, 2.2f, 0.5f, steel); // Streuwalzen
+                part(-hl * 0.45f, W * 0.2f, 0.8f, 0.5f, 2.2f, 0.5f, steel);
+                break;
+            }
+            case Defs.T_TREEPLANT: {
+                part(0, 0, 0.6f, L * 0.6f, 0.4f, W * 0.8f, col);
+                part(0, 0, 1.0f, L * 0.5f, 0.6f, W * 0.7f, 0xFF8D6E63);    // Kisten mit Setzlingen
+                for (int k = 0; k < 6; k++) part(-hl * 0.2f + (k % 3) * 0.6f, -0.5f + (k / 3) * 1.0f, 1.6f, 0.3f, 0.5f, 0.3f, 0xFF43A047);
+                axle(-hl * 0.5f, W * 0.8f, 0.4f, 0.3f);
+                break;
+            }
+            case Defs.T_CHIPPER: {
+                axle(-hl * 0.2f, W * 0.9f, 0.6f, 0.4f);
+                part(0, 0, 0.9f, L * 0.8f, 1.3f, W * 0.8f, col);           // Hacker
+                part(hl * 0.6f, 0, 1.0f, 1.0f, 1.0f, 1.2f, steel);          // Einzug
+                part(-hl * 0.3f, 0, 2.2f, 0.4f, 1.8f, 0.4f, dark);          // Auswurfrohr
+                part(-hl * 0.6f, 0, 3.8f, 1.2f, 0.35f, 0.35f, dark);
+                break;
+            }
+            case Defs.T_FWDTRAILER:
+            case Defs.T_LOGTRAILER: {
+                axle(-hl * 0.3f, W * 0.95f, 0.6f, 0.4f);
+                axle(-hl * 0.3f + 1.3f, W * 0.95f, 0.6f, 0.4f);
+                if (m.cap >= 20) axle(-hl * 0.3f - 1.3f, W * 0.95f, 0.6f, 0.4f);
+                part(0, 0, 1.0f, L * 0.9f, 0.25f, W * 0.7f, dark);          // Rahmen
+                for (float a = -hl * 0.8f; a <= hl * 0.8f; a += L * 0.27f) {
+                    part(a, -W * 0.42f, 1.2f, 0.15f, 1.8f, 0.15f, col);    // Rungen
+                    part(a, W * 0.42f, 1.2f, 0.15f, 1.8f, 0.15f, col);
+                }
+                if (m.sub == Defs.T_FWDTRAILER) {
+                    part(hl * 0.8f, 0, 1.2f, 0.4f, 2.6f, 0.4f, 0xFFFFA000); // Kransäule
+                    part(hl * 0.3f, 0, 3.6f, 2.8f, 0.3f, 0.3f, 0xFFFFA000); // Kranarm
+                }
+                break;
+            }
+            default: { // Kipper
+                int axles = m.cap >= 26 ? 3 : m.cap >= 14 ? 2 : 1;
+                for (int a = 0; a < axles; a++) axle(-hl * 0.25f + (a - (axles - 1) / 2f) * 1.3f, W * 0.95f, 0.6f, 0.45f);
+                part(0, 0, 0.9f, L * 0.9f, 0.25f, W * 0.95f, dark);         // Chassis
+                part(0, 0, 1.15f, L * 0.88f, 0.15f, W * 0.95f, col);        // Boden
+                part(0, -W * 0.46f, 1.3f, L * 0.88f, 1.2f, 0.1f, col);      // Bordwände
+                part(0, W * 0.46f, 1.3f, L * 0.88f, 1.2f, 0.1f, col);
+                part(hl * 0.86f, 0, 1.3f, 0.1f, 1.4f, W * 0.95f, col);
+                part(-hl * 0.86f, 0, 1.3f, 0.1f, 1.2f, W * 0.95f, mix(col, 0xFF000000, 0.15f));
+                break;
+            }
+        }
         Spot sp = new Spot();
         sp.x = x;
         sp.z = z;

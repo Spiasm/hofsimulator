@@ -247,6 +247,9 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             "🗺 Karte: Mit einem Finger verschieben, mit zwei Fingern zoomen.\n\n"
                     + "🌾 Felder: Antippen zeigt Zustand und Preis. Deine Felder haben einen gelben Rand und ★.\n"
                     + "Ablauf: Grubbern → Säen → (Düngen) → wachsen lassen → Ernten → von vorn.\n"
+                    + "Früchte: Weizen, Dinkel, Raps, Soja (Sämaschine + Mähdrescher), Mais (Sämaschine + Häcksler), Kartoffeln "
+                    + "(Legemaschine + Roder), Salat und Wassermelonen (Gemüse-Pflanzmaschine + Gemüse-Vollernter), Gras.\n"
+                    + "💶 Finanzen: oben auf den Kontostand tippen – Einnahmen und Ausgaben pro Tag.\n"
                     + "Grubbern geht immer – auch wenn noch etwas wächst (das wird dann untergearbeitet). So kannst du ein "
                     + "gekauftes Feld sofort auf deine Frucht umstellen.\n"
                     + "Gras: erst mit dem Mähwerk mähen, dann mit Ladewagen oder Feldhäcksler einsammeln. Danach wächst es nach.\n\n"
@@ -320,6 +323,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         LinearLayout info = new LinearLayout(this);
         info.setOrientation(LinearLayout.VERTICAL);
         info.addView(moneyText);
+        moneyText.setOnClickListener(v -> showFinance());
         info.addView(dateText);
         row.addView(info, new LinearLayout.LayoutParams(0, -2, 1f));
         pauseBtn = small("⏸", BTN);
@@ -704,7 +708,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         }
         if (f.owned && f.ripe()) {
             double y = Defs.YIELD[f.crop] * (f.fertilized ? 1 : 0.8) * f.hectares();
-            s += String.format(Locale.GERMANY, "\nErwartete Ernte: ca. %.0f t (%s)", y, Game.euro(y * game.bestPrice(f.crop)));
+            s += String.format(Locale.GERMANY, "\nErwartete Ernte: ca. %.0f t (%s)", y, Game.euro(y * game.bestPrice(Defs.productOf(f.crop))));
         }
         return s;
     }
@@ -855,15 +859,28 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                 .show();
     }
 
+    private boolean hasTool(int sub) {
+        for (Game.Tool t : game.tools) if (t.m().sub == sub) return true;
+        return false;
+    }
+
     private void chooseCrop(final Field f, final CropCallback cb) {
-        String[] items = new String[4];
-        int[] order = {Defs.WHEAT, Defs.MAIZE, Defs.POTATO, Defs.GRASS};
-        for (int i = 0; i < 4; i++) {
+        final int[] order = Defs.CROP_ORDER;
+        String[] items = new String[order.length];
+        for (int i = 0; i < order.length; i++) {
             int c = order[i];
-            items[i] = Defs.CROP_NAMES[c] + " – Saatgut " + Game.euro(Defs.SEED_COST[c] * f.hectares())
-                    + (c == Defs.POTATO ? " (Legemaschine)" : "");
+            int st = Defs.sowToolFor(c), hv = Defs.harvesterFor(c);
+            boolean haveSow = false, haveHarv = false;
+            for (Game.Tool t : game.tools) if (t.m().sub == st) haveSow = true;
+            for (Game.Vehicle v : game.vehicles) if (v.isHarvester() && v.m().sub == hv) haveHarv = true;
+            if (c == Defs.GRASS) haveHarv = haveHarv || hasTool(Defs.T_LOADER);
+            double price = game.bestPrice(Defs.productOf(c));
+            items[i] = String.format(Locale.GERMANY, "%s %s – Saat %s • %.0f Tage • ca. %s/t\n     %s %s, %s %s",
+                    Defs.CROP_ICON[c], Defs.CROP_NAMES[c], Game.euro(Defs.SEED_COST[c] * f.hectares()), Defs.GROW_DAYS[c],
+                    Game.euro(price), haveSow ? "✔" : "✘", Defs.T_KIND_NAMES[st],
+                    haveHarv ? "✔" : "✘", c == Defs.GRASS ? "Häcksler/Ladewagen" : Defs.H_KIND_NAMES[hv]);
         }
-        new AlertDialog.Builder(this).setTitle("Was säen auf Feld " + f.number + "?")
+        new AlertDialog.Builder(this).setTitle("Was säen auf Feld " + f.number + "? (✔ = Maschine hast du)")
                 .setItems(items, (d, which) -> cb.onCrop(order[which])).show();
     }
 
@@ -876,13 +893,16 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         String firstErr = null;
         for (int t : Defs.TASK_ORDER) {
             if (!f.owned || !f.canDo(t)) continue;
-            int probeCrop = t == Defs.TASK_SOW ? (v.tool >= 0 && game.tool(v.tool) != null
-                    && game.tool(v.tool).m().sub == Defs.T_PLANTER ? Defs.POTATO : Defs.WHEAT) : Defs.WHEAT;
+            int probeCrop = Defs.WHEAT;
+            if (t == Defs.TASK_SOW && v.tool >= 0 && game.tool(v.tool) != null) {
+                int ts = game.tool(v.tool).m().sub;
+                if (ts == Defs.T_PLANTER) probeCrop = Defs.POTATO;
+                else if (ts == Defs.T_VEGPLANT) probeCrop = Defs.SALAD;
+            }
             if (t == Defs.TASK_FERTILIZE) probeCrop = Defs.FERT_MINERAL;
             String err = game.checkFieldJob(v, f, t, probeCrop);
             if (t == Defs.TASK_SOW && err != null) {
-                String e2 = game.checkFieldJob(v, f, t, Defs.POTATO);
-                if (e2 == null) err = null;
+                if (game.checkFieldJob(v, f, t, Defs.POTATO) == null || game.checkFieldJob(v, f, t, Defs.SALAD) == null) err = null;
             }
             if (t == Defs.TASK_FERTILIZE && err != null) {
                 if (game.checkFieldJob(v, f, t, Defs.FERT_SLURRY) == null || game.checkFieldJob(v, f, t, Defs.FERT_DUNG) == null) err = null;
@@ -1359,47 +1379,97 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
 
     // ----------------------------------------------------------------- Dialoge
 
+    /** Eintrag im Kaufmenü: Maschinenart oder Sonderaktion */
+    private static final class ShopItem {
+        final String label;
+        final int kind, sub;
+        final Runnable action;
+
+        ShopItem(String label, int kind, int sub) {
+            this.label = label;
+            this.kind = kind;
+            this.sub = sub;
+            this.action = null;
+        }
+
+        ShopItem(String label, Runnable action) {
+            this.label = label;
+            this.kind = -1;
+            this.sub = -1;
+            this.action = action;
+        }
+    }
+
     private void showShop() {
-        final String[] cats = {"🚜 Traktoren", "🌾 Mähdrescher", "🌽 Feldhäcksler", "🥔 Kartoffelroder", "⛏ Grubber",
-                "🌱 Sämaschinen", "🥔 Kartoffel-Legemaschinen", "🧪 Düngerstreuer", "🚛 Kipper", "✂ Mähwerke", "🌿 Ladewagen",
-                "🐄 Ställe", "🏗 Bauen: Windrad & PV", "🌾 Felder", "💸 Maschinen & Geräte verkaufen",
-                "💧 Güllefässer", "💩 Miststreuer", "🌲 Forstmaschinen", "🌱 Pflanzmaschine", "🪵 Rückewagen", "🪵 Holzhacker",
-                "🚛 Kurzholzanhänger", "🌲 Wald kaufen"};
+        final String[] groups = {"🚜 Zugmaschinen (Traktoren)", "⛏ Bodenbearbeitung & Saat", "🧪 Düngen", "🌾 Erntemaschinen",
+                "🌿 Grünland (Mähen & Einsammeln)", "🚛 Transport", "🌲 Forst & Wald", "🐄 Ställe", "🏗 Bauen: Windrad & PV",
+                "🗺 Felder kaufen", "💸 Maschinen & Geräte verkaufen"};
         new AlertDialog.Builder(this).setTitle("Kaufen/Verkaufen – Kontostand " + Game.euro(game.money))
-                .setItems(cats, (d, which) -> {
+                .setItems(groups, (d, which) -> {
                     switch (which) {
-                        case 0: shopModels(cats[0], Defs.K_TRACTOR, 0); break;
-                        case 1: shopModels(cats[1], Defs.K_HARVESTER, Defs.H_COMBINE); break;
-                        case 2: shopModels(cats[2], Defs.K_HARVESTER, Defs.H_CHOPPER); break;
-                        case 3: shopModels(cats[3], Defs.K_HARVESTER, Defs.H_POTATO); break;
-                        case 4: shopModels(cats[4], Defs.K_TOOL, Defs.T_GRUBBER); break;
-                        case 5: shopModels(cats[5], Defs.K_TOOL, Defs.T_SEEDER); break;
-                        case 6: shopModels(cats[6], Defs.K_TOOL, Defs.T_PLANTER); break;
-                        case 7: shopModels(cats[7], Defs.K_TOOL, Defs.T_SPREADER); break;
-                        case 8: shopModels(cats[8], Defs.K_TOOL, Defs.T_TRAILER); break;
-                        case 9: shopModels(cats[9], Defs.K_TOOL, Defs.T_MOWER); break;
-                        case 10: shopModels(cats[10], Defs.K_TOOL, Defs.T_LOADER); break;
-                        case 11: shopStables(); break;
-                        case 12: shopBuild(); break;
-                        case 13:
+                        case 0: shopModels(groups[0], Defs.K_TRACTOR, 0); break;
+                        case 1: shopGroup(groups[1], new ShopItem[]{
+                                new ShopItem("⛏ Grubber", Defs.K_TOOL, Defs.T_GRUBBER),
+                                new ShopItem("🌱 Sämaschinen (Getreide, Mais, Raps, Soja, Gras)", Defs.K_TOOL, Defs.T_SEEDER),
+                                new ShopItem("🥔 Kartoffel-Legemaschinen", Defs.K_TOOL, Defs.T_PLANTER),
+                                new ShopItem("🥬 Gemüse-Pflanzmaschinen (Salat, Melonen)", Defs.K_TOOL, Defs.T_VEGPLANT)});
+                            break;
+                        case 2: shopGroup(groups[2], new ShopItem[]{
+                                new ShopItem("🧪 Düngerstreuer (Kunstdünger)", Defs.K_TOOL, Defs.T_SPREADER),
+                                new ShopItem("💧 Güllefässer", Defs.K_TOOL, Defs.T_SLURRY),
+                                new ShopItem("💩 Miststreuer", Defs.K_TOOL, Defs.T_MANURE)});
+                            break;
+                        case 3: shopGroup(groups[3], new ShopItem[]{
+                                new ShopItem("🌾 Mähdrescher (Weizen, Dinkel, Raps, Soja)", Defs.K_HARVESTER, Defs.H_COMBINE),
+                                new ShopItem("🌽 Feldhäcksler (Mais, Gras)", Defs.K_HARVESTER, Defs.H_CHOPPER),
+                                new ShopItem("🥔 Kartoffelroder", Defs.K_HARVESTER, Defs.H_POTATO),
+                                new ShopItem("🥬 Gemüse-Vollernter (Salat, Melonen)", Defs.K_HARVESTER, Defs.H_VEG)});
+                            break;
+                        case 4: shopGroup(groups[4], new ShopItem[]{
+                                new ShopItem("✂ Mähwerke", Defs.K_TOOL, Defs.T_MOWER),
+                                new ShopItem("🌿 Ladewagen", Defs.K_TOOL, Defs.T_LOADER)});
+                            break;
+                        case 5: shopModels("🚛 Kipper", Defs.K_TOOL, Defs.T_TRAILER); break;
+                        case 6: shopGroup(groups[6], new ShopItem[]{
+                                new ShopItem("🌲 Forstmaschinen (Prozessor, Forwarder, Holz-Lkw)", Defs.K_FORESTRY, -1),
+                                new ShopItem("🌱 Pflanzmaschine (Bäume)", Defs.K_TOOL, Defs.T_TREEPLANT),
+                                new ShopItem("🪵 Rückewagen mit Kran", Defs.K_TOOL, Defs.T_FWDTRAILER),
+                                new ShopItem("🪵 Holzhacker", Defs.K_TOOL, Defs.T_CHIPPER),
+                                new ShopItem("🚛 Kurzholzanhänger", Defs.K_TOOL, Defs.T_LOGTRAILER),
+                                new ShopItem("🌲 Wald kaufen", () -> new AlertDialog.Builder(this).setMessage(
+                                        "Wald kaufst du direkt auf der Karte: dunkelgrünes Waldstück (🌲 mit Nummer) antippen → „Kaufen“.\nPreis: ca. "
+                                                + Game.euro(Defs.FOREST_PRICE_HA) + " pro Hektar.").setPositiveButton("OK", null).show())});
+                            break;
+                        case 7: shopStables(); break;
+                        case 8: shopBuild(); break;
+                        case 9:
                             new AlertDialog.Builder(this).setMessage(
                                     "Felder kaufst du direkt auf der Karte: Feld antippen → „Kaufen“.\nPreis: ca. "
                                             + Game.euro(Defs.FIELD_PRICE_HA) + " pro Hektar.").setPositiveButton("OK", null).show();
                             break;
-                        case 14: sellStuff(); break;
-                        case 15: shopModels(cats[15], Defs.K_TOOL, Defs.T_SLURRY); break;
-                        case 16: shopModels(cats[16], Defs.K_TOOL, Defs.T_MANURE); break;
-                        case 17: shopModels(cats[17], Defs.K_FORESTRY, -1); break;
-                        case 18: shopModels(cats[18], Defs.K_TOOL, Defs.T_TREEPLANT); break;
-                        case 19: shopModels(cats[19], Defs.K_TOOL, Defs.T_FWDTRAILER); break;
-                        case 20: shopModels(cats[20], Defs.K_TOOL, Defs.T_CHIPPER); break;
-                        case 21: shopModels(cats[21], Defs.K_TOOL, Defs.T_LOGTRAILER); break;
-                        default:
-                            new AlertDialog.Builder(this).setMessage(
-                                    "Wald kaufst du direkt auf der Karte: dunkelgrünes Waldstück (🌲 mit Nummer) antippen → „Kaufen“.\nPreis: ca. "
-                                            + Game.euro(Defs.FOREST_PRICE_HA) + " pro Hektar.").setPositiveButton("OK", null).show();
+                        default: sellStuff();
                     }
                 }).show();
+    }
+
+    private void shopGroup(String title, final ShopItem[] items) {
+        String[] labels = new String[items.length];
+        for (int i = 0; i < items.length; i++) {
+            ShopItem it = items[i];
+            int have = 0;
+            if (it.action == null) {
+                for (Game.Vehicle v : game.vehicles) if (v.m().kind == it.kind && (it.sub < 0 || v.m().sub == it.sub)) have++;
+                for (Game.Tool t : game.tools) if (t.m().kind == it.kind && t.m().sub == it.sub) have++;
+            }
+            labels[i] = it.label + (have > 0 ? "  (hast du: " + have + ")" : "");
+        }
+        new AlertDialog.Builder(this).setTitle(title)
+                .setItems(labels, (d, which) -> {
+                    ShopItem it = items[which];
+                    if (it.action != null) it.action.run();
+                    else shopModels(it.label, it.kind, it.sub);
+                })
+                .setNegativeButton("◀ Zurück", (d, w) -> showShop()).show();
     }
 
     interface PickAction {
@@ -1571,7 +1641,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         StringBuilder sb = new StringBuilder();
         sb.append("📦 Hoflager:\n");
         for (int p = 0; p < Defs.PRODUCTS; p++) {
-            if (p >= Defs.WOOD) continue;
+            if (Defs.isWood(p)) continue;
             sb.append(String.format(Locale.GERMANY, "• %s: %.1f t\n", Defs.PRODUCT_NAMES[p], game.storage[p]));
         }
         sb.append("\n💶 Preise heute (€/t):\n");
@@ -1690,6 +1760,70 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         getPreferences(MODE_PRIVATE).edit().putInt("detail", d).apply();
     }
 
+    private void showFinance() {
+        if (game == null) return;
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(16), dp(8), dp(16), dp(8));
+        FinanceChart chart = new FinanceChart(this, game.finHist, game.fin, 8);
+        box.addView(chart, new LinearLayout.LayoutParams(-1, dp(150)));
+        // Tabelle: heute, gestern, Schnitt 7 Tage
+        double[] today = game.fin;
+        double[] yest = game.finHist.isEmpty() ? new double[Game.FIN_CATS] : game.finHist.get(0);
+        double[] avg = new double[Game.FIN_CATS];
+        int n = Math.min(7, game.finHist.size());
+        for (int k = 0; k < n; k++) for (int i = 0; i < Game.FIN_CATS; i++) avg[i] += game.finHist.get(k)[i] / n;
+        android.widget.TableLayout tab = new android.widget.TableLayout(this);
+        tab.setStretchAllColumns(true);
+        tab.setPadding(0, dp(8), 0, 0);
+        tab.addView(finRow("", "heute bisher", "gestern", n > 0 ? "Ø " + n + " Tage" : "Ø", 0xFF616161, true));
+        tab.addView(finRow("EINNAHMEN", "", "", "", 0xFF2E7D32, true));
+        for (int i = 0; i < Game.FIN_FIRST_OUT; i++) {
+            if (i == Game.FIN_TRADE_IN && !helping()) continue;
+            tab.addView(finRow(Game.FIN_NAMES[i], money0(today[i]), money0(yest[i]), money0(avg[i]), 0xFF333333, false));
+        }
+        tab.addView(finRow("AUSGABEN", "", "", "", 0xFFC62828, true));
+        for (int i = Game.FIN_FIRST_OUT; i < Game.FIN_CATS; i++) {
+            if (i == Game.FIN_TRADE_OUT && !helping()) continue;
+            tab.addView(finRow(Game.FIN_NAMES[i], money0(-today[i]), money0(-yest[i]), money0(-avg[i]), 0xFF333333, false));
+        }
+        double nt = FinanceChart.in(today) - FinanceChart.out(today), ny = FinanceChart.in(yest) - FinanceChart.out(yest),
+                na = FinanceChart.in(avg) - FinanceChart.out(avg);
+        tab.addView(finRow("= Gewinn / Verlust", money0(nt), money0(ny), money0(na), na >= 0 ? 0xFF1B5E20 : 0xFFB71C1C, true));
+        box.addView(tab);
+        // laufende Kosten ohne Käufe
+        double runAvg = 0;
+        for (int i = Game.FIN_FIRST_OUT; i < Game.FIN_CATS; i++) if (i != Game.FIN_BUY && i != Game.FIN_LAND && i != Game.FIN_TRADE_OUT) runAvg += avg[i];
+        double incAvg = FinanceChart.in(avg) - avg[Game.FIN_SOLD] - avg[Game.FIN_TRADE_IN];
+        TextView hint = text(String.format(Locale.GERMANY,
+                "\nOhne Käufe und Verkäufe von Maschinen/Land: im Schnitt %s Einnahmen und %s laufende Kosten pro Tag → %s pro Tag.",
+                Game.euro(incAvg), Game.euro(runAvg), Game.euro(incAvg - runAvg)), 13, 0xFF555555, false);
+        box.addView(hint);
+        ScrollView sv = new ScrollView(this);
+        sv.addView(box);
+        new AlertDialog.Builder(this).setTitle("💶 Finanzen – Kontostand " + Game.euro(game.money)).setView(sv)
+                .setPositiveButton("OK", null).show();
+    }
+
+    private static String money0(double v) {
+        if (Math.abs(v) < 0.5) return "–";
+        return String.format(Locale.GERMANY, "%,.0f €", v);
+    }
+
+    private android.widget.TableRow finRow(String a, String b, String c, String d, int color, boolean bold) {
+        android.widget.TableRow r = new android.widget.TableRow(this);
+        String[] cells = {a, b, c, d};
+        for (int i = 0; i < 4; i++) {
+            TextView t = text(cells[i], 12, color, bold);
+            t.setGravity(i == 0 ? Gravity.START : Gravity.END);
+            t.setPadding(0, dp(2), dp(4), dp(2));
+            if (i == 0) t.setLayoutParams(new android.widget.TableRow.LayoutParams(0, -2, 2.2f));
+            else t.setLayoutParams(new android.widget.TableRow.LayoutParams(0, -2, 1f));
+            r.addView(t);
+        }
+        return r;
+    }
+
     private void showVolume() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -1750,9 +1884,10 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     private void showGameMenu() {
         String[] names = {"Einfach", "Mittel", "Hoch"};
         String[] items = {"💾 Speichern", "🎨 Grafik: " + names[map.detail], "❓ Anleitung", "🏠 Karte zum Hof", "🚪 Speichern & zum Hauptmenü",
-                soundOn ? "🔊 Geräusche & Lautstärke" : "🔇 Geräusche: aus"};
+                soundOn ? "🔊 Geräusche & Lautstärke" : "🔇 Geräusche: aus", "💶 Finanzen"};
         new AlertDialog.Builder(this).setTitle("Menü").setItems(items, (d, which) -> {
-            if (which == 5) showVolume();
+            if (which == 6) showFinance();
+            else if (which == 5) showVolume();
             else if (which == 0) save(true);
             else if (which == 1) {
                 String[] opts = {"Einfach – für ältere Handys (schlichte Felder, kein Verkehr)",

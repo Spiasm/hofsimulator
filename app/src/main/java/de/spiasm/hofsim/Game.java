@@ -125,9 +125,21 @@ public class Game {
         public final List<Vehicle> vehicles = new ArrayList<>();
         public final List<Tool> tools = new ArrayList<>();
         public String name = "";
+        /** heute bisher je Kategorie */
+        public final double[] fin = new double[FIN_CATS];
+        /** vergangene Tage (neuester zuerst) */
+        public final List<double[]> finHist = new ArrayList<>();
         /** Nachrichten für diesen Hof */
         public final List<String> outbox = new ArrayList<>();
     }
+
+    /** Finanzen: Kategorien (0–4 Einnahmen, 5–10 Ausgaben) */
+    public static final int FIN_SALES = 0, FIN_ANIMALS = 1, FIN_ENERGY = 2, FIN_SOLD = 3, FIN_TRADE_IN = 4,
+            FIN_WAGES = 5, FIN_SEED = 6, FIN_STABLES = 7, FIN_BUY = 8, FIN_LAND = 9, FIN_TRADE_OUT = 10, FIN_CATS = 11, FIN_FIRST_OUT = 5;
+    public static final String[] FIN_NAMES = {"🌾 Ware verkauft", "🐾 Tierprodukte", "⚡ Strom (PV & Wind)", "🚜 Maschinen verkauft",
+            "🤝 Von Mitspielern", "👷 Helferlohn & Diesel", "🌱 Saatgut & Dünger", "🐄 Stallkosten", "🛒 Maschinen gekauft",
+            "🏗 Felder, Wald & Bauen", "🤝 An Mitspieler"};
+    public static final int FIN_DAYS = 14;
 
     /** Spielart: 0 allein / gemeinsamer Hof, 1 jeder eigener Hof, 2 eigene Höfe + helfen */
     public static final int MODE_SHARED = 0, MODE_OWN = 1, MODE_HELP = 2;
@@ -158,6 +170,8 @@ public class Game {
     private int[] lastManureWarn;
     public boolean pvHouse, pvHall;
     public boolean[] pvStable;
+    public double[] fin;
+    public List<double[]> finHist;
     public List<int[]> winds;
     public List<Vehicle> vehicles;
     public List<Tool> tools;
@@ -262,6 +276,8 @@ public class Game {
         pvHouse = f.pvHouse;
         pvHall = f.pvHall;
         pvStable = f.pvStable;
+        fin = f.fin;
+        finHist = f.finHist;
         winds = f.winds;
         vehicles = f.vehicles;
         tools = f.tools;
@@ -349,6 +365,8 @@ public class Game {
         b.storage[product] += tons;
         s.money += total;
         b.money -= total;
+        s.fin[FIN_TRADE_IN] += total;
+        b.fin[FIN_TRADE_OUT] += total;
         load();
         String t = String.format(Locale.GERMANY, "%.1f t %s für %s", tons, Defs.PRODUCT_NAMES[product], euro(total));
         s.outbox.add("🤝 Verkauft an " + b.name + ": " + t);
@@ -380,7 +398,7 @@ public class Game {
                 f.state = Field.CULTIVATED;
             } else {
                 f.state = Field.GROWING;
-                f.crop = r.nextInt(4);
+                f.crop = r.nextInt(Defs.CROPS);
                 f.growth = r.nextDouble() * 1.05;
                 f.fertilized = r.nextBoolean();
             }
@@ -598,9 +616,12 @@ public class Game {
             double e = energyRateNow() * dt / 86400.0;
             energyToday += e;
             money += e;
+            fin[FIN_ENERGY] += e;
             for (Vehicle v : new ArrayList<>(vehicles)) {
                 if (v.busy()) {
-                    money -= (Defs.HELPER_WAGE + v.m().diesel) * dt / 3600.0;
+                    double w = (Defs.HELPER_WAGE + v.m().diesel) * dt / 3600.0;
+                    money -= w;
+                    fin[FIN_WAGES] += w;
                     updateVehicle(v, dt);
                 }
             }
@@ -635,6 +656,8 @@ public class Game {
             f = Math.max(0, f);
             for (int p = 0; p < 4; p++) stableFeed[s][p] = Math.max(0, stableFeed[s][p] - Defs.S_FEED[s][p] * f);
             money += Defs.S_INCOME[s] * f - Defs.S_COST[s];
+            fin[FIN_ANIMALS] += Defs.S_INCOME[s] * f;
+            fin[FIN_STABLES] += Defs.S_COST[s];
             // Gülle / Mist
             double prod = (Defs.S_SLURRY[s] + Defs.S_DUNG[s]) * f;
             double cap = manureCap(s);
@@ -658,6 +681,10 @@ public class Game {
         // Energie (wird laufend verdient, hier nur Tageswert merken)
         lastEnergy = energyToday;
         energyToday = 0;
+        // Finanzen: Tag abschließen
+        finHist.add(0, fin.clone());
+        while (finHist.size() > FIN_DAYS) finHist.remove(finHist.size() - 1);
+        java.util.Arrays.fill(fin, 0);
     }
 
     private void newWeather() {
@@ -765,7 +792,7 @@ public class Game {
                 f.idleDays += 1;
                 if (f.idleDays > 4) {
                     f.state = Field.GROWING;
-                    f.crop = rnd.nextInt(4);
+                    f.crop = rnd.nextInt(Defs.CROPS);
                     f.growth = 0;
                     f.fertilized = rnd.nextBoolean();
                 }
@@ -1037,6 +1064,7 @@ public class Game {
                     if (v.loadProduct >= 0 && v.load > 0) {
                         double earn = v.load * price(s.a, v.loadProduct);
                         money += earn;
+                        fin[FIN_SALES] += earn;
                         msg(String.format(Locale.GERMANY, "💶 %.1f t %s an %s verkauft: %s", v.load,
                                 Defs.PRODUCT_NAMES[v.loadProduct], Defs.BUYER_NAMES[s.a], euro(earn)));
                     }
@@ -1201,7 +1229,7 @@ public class Game {
                     break;
                 case POLTER: {
                     Forest fo = world.forests.get(s.a);
-                    if (v.load > 0 && v.loadProduct >= Defs.WOOD) {
+                    if (v.load > 0 && Defs.isWood(v.loadProduct)) {
                         fo.polter += v.load;
                         fo.woodSpecies = v.loadProduct - Defs.WOOD;
                     }
@@ -1332,7 +1360,7 @@ public class Game {
             double room = capOf(v) - v.load;
             double dpMax = room / (yieldHa * area);
             if (dp > dpMax) dp = Math.max(0, dpMax);
-            v.loadProduct = f.crop;
+            v.loadProduct = Defs.productOf(f.crop);
         }
         double appRate = s.c == Defs.FERT_SLURRY ? Defs.APP_SLURRY : Defs.APP_DUNG;
         if (manure) {
@@ -1569,7 +1597,7 @@ public class Game {
 
     public int toolFor(int task, int crop) {
         if (task == Defs.TASK_CULTIVATE) return Defs.T_GRUBBER;
-        if (task == Defs.TASK_SOW) return crop == Defs.POTATO ? Defs.T_PLANTER : Defs.T_SEEDER;
+        if (task == Defs.TASK_SOW) return Defs.sowToolFor(crop);
         if (task == Defs.TASK_FERTILIZE) {
             if (crop == Defs.FERT_SLURRY) return Defs.T_SLURRY;
             if (crop == Defs.FERT_DUNG) return Defs.T_MANURE;
@@ -1628,6 +1656,7 @@ public class Game {
         double cost = taskCost(f, task, crop);
         if (cost > 0) {
             money -= cost;
+            fin[FIN_SEED] += cost;
             msg((task == Defs.TASK_SOW ? "🌱 Saatgut" : "🧪 Dünger") + " gekauft: " + euro(cost));
         }
         f.busyBy = v.id;
@@ -1839,6 +1868,7 @@ public class Game {
         double cost = forestCost(fo, task, species);
         if (cost > 0) {
             money -= cost;
+            fin[FIN_SEED] += cost;
             msg("🌱 Setzlinge gekauft: " + euro(cost));
         }
         fo.busyBy = v.id;
@@ -2063,6 +2093,7 @@ public class Game {
         if (fo.owner >= 0) return "Der Wald gehört schon " + farms[fo.owner].name + ".";
         if (money < fo.price()) return "Zu wenig Geld.";
         money -= fo.price();
+        fin[FIN_LAND] += fo.price();
         fo.owned = true;
         fo.owner = cur;
         if (fo.growth > 1) fo.growth = 1;
@@ -2075,6 +2106,7 @@ public class Game {
         Defs.Model m = Defs.model(modelId);
         if (money < m.price) return "Zu wenig Geld.";
         money -= m.price;
+        fin[FIN_BUY] += m.price;
         if (m.kind == Defs.K_TOOL) addTool(modelId);
         else addVehicle(modelId);
         return null;
@@ -2084,6 +2116,7 @@ public class Game {
         if (stables[s]) return "Den hast du schon.";
         if (money < Defs.S_PRICE[s]) return "Zu wenig Geld.";
         money -= Defs.S_PRICE[s];
+        fin[FIN_LAND] += Defs.S_PRICE[s];
         stables[s] = true;
         return null;
     }
@@ -2094,6 +2127,7 @@ public class Game {
         if (money < f.price()) return "Zu wenig Geld.";
         if (fireField == f.index) return "Das Feld brennt gerade.";
         money -= f.price();
+        fin[FIN_LAND] += f.price();
         f.owned = true;
         f.owner = cur;
         if (f.growth > 1) f.growth = 1;
@@ -2106,6 +2140,7 @@ public class Game {
         if (which >= 2 && !stables[which - 2]) return "Den Stall hast du noch nicht.";
         if (money < Defs.PV_ROOF_PRICE) return "Zu wenig Geld.";
         money -= Defs.PV_ROOF_PRICE;
+        fin[FIN_LAND] += Defs.PV_ROOF_PRICE;
         if (which == 0) pvHouse = true;
         else if (which == 1) pvHall = true;
         else pvStable[which - 2] = true;
@@ -2124,6 +2159,7 @@ public class Game {
         double price = solarParkPrice(f);
         if (money < price) return "Zu wenig Geld (" + euro(price) + ").";
         money -= price;
+        fin[FIN_LAND] += price;
         f.pv = true;
         f.task = -1;
         f.progress = 0;
@@ -2134,6 +2170,7 @@ public class Game {
         if (!world.canBuildWind(tx, ty)) return "Hier ist kein Platz – ein Windrad braucht freie Wiese (3×3 Felder).";
         if (money < Defs.WIND_PRICE) return "Zu wenig Geld (" + euro(Defs.WIND_PRICE) + ").";
         money -= Defs.WIND_PRICE;
+        fin[FIN_LAND] += Defs.WIND_PRICE;
         world.buildWind(tx, ty);
         winds.add(new int[]{tx, ty});
         return null;
@@ -2145,6 +2182,7 @@ public class Game {
         Tool t = tool(v.tool);
         if (t != null) t.attachedTo = -1;
         money += v.m().price * 0.5;
+        fin[FIN_SOLD] += v.m().price * 0.5;
         vehicles.remove(v);
         return null;
     }
@@ -2152,6 +2190,7 @@ public class Game {
     public String sellTool(Tool t) {
         if (t.attachedTo != -1 || t.reservedBy != -1) return "Das Gerät ist gerade im Einsatz.";
         money += t.m().price * 0.5;
+        fin[FIN_SOLD] += t.m().price * 0.5;
         tools.remove(t);
         return null;
     }
@@ -2282,6 +2321,16 @@ public class Game {
         JSONArray ta = new JSONArray();
         for (Tool t : tools) ta.put(new JSONArray().put(t.id).put(t.model).put(t.attachedTo).put(t.reservedBy));
         o.put("tools", ta);
+        JSONArray fa = new JSONArray();
+        for (double d : fin) fa.put(d);
+        o.put("fin", fa);
+        JSONArray fh = new JSONArray();
+        for (double[] day : finHist) {
+            JSONArray dj = new JSONArray();
+            for (double d : day) dj.put(d);
+            fh.put(dj);
+        }
+        o.put("finH", fh);
         return o;
     }
 
@@ -2314,7 +2363,11 @@ public class Game {
         snowCover = o.optDouble("snow", 0);
         JSONArray pf = o.getJSONArray("prices");
         for (int b = 0; b < Defs.BUYERS; b++)
-            for (int p = 0; p < Defs.PRODUCTS; p++) priceFactor[b][p] = pf.getDouble(b * Defs.PRODUCTS + p);
+            for (int p = 0; p < Defs.PRODUCTS; p++) {
+                // ältere Spielstände hatten weniger Produkte
+                int np = pf.length() / Defs.BUYERS;
+                priceFactor[b][p] = p < np ? pf.getDouble(b * np + p) : 1;
+            }
         JSONArray fire = o.optJSONArray("fire");
         if (fire != null && muted) {
             fireField = fire.getInt(0);
@@ -2386,7 +2439,7 @@ public class Game {
         JSONArray sm = o.getJSONArray("manure");
         for (int s = 0; s < Defs.STABLES; s++) stableManure[s] = sm.getDouble(s);
         JSONArray st = o.getJSONArray("storage");
-        for (int i = 0; i < Defs.PRODUCTS; i++) storage[i] = st.getDouble(i);
+        for (int i = 0; i < Defs.PRODUCTS; i++) storage[i] = i < st.length() ? st.getDouble(i) : 0;
         JSONArray sb = o.getJSONArray("stables"), sf = o.getJSONArray("stableFeed"), sp = o.getJSONArray("pvStable");
         for (int s = 0; s < Defs.STABLES; s++) {
             stables[s] = sb.getBoolean(s);
@@ -2450,6 +2503,19 @@ public class Game {
             t.attachedTo = a.getInt(2);
             t.reservedBy = a.length() > 3 ? a.getInt(3) : -1;
             tools.add(t);
+        }
+        java.util.Arrays.fill(fin, 0);
+        finHist.clear();
+        JSONArray fa = o.optJSONArray("fin");
+        if (fa != null) for (int i = 0; i < fa.length() && i < FIN_CATS; i++) fin[i] = fa.getDouble(i);
+        JSONArray fh = o.optJSONArray("finH");
+        if (fh != null) {
+            for (int k = 0; k < fh.length(); k++) {
+                JSONArray dj = fh.getJSONArray(k);
+                double[] day = new double[FIN_CATS];
+                for (int i = 0; i < dj.length() && i < FIN_CATS; i++) day[i] = dj.getDouble(i);
+                finHist.add(day);
+            }
         }
     }
 }

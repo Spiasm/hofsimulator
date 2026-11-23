@@ -41,7 +41,8 @@ public class MapView extends View {
     private final ScaleGestureDetector scaler;
     private final GestureDetector gestures;
 
-    public static final int[] PRODUCT_COLOR = {0xFF7CB342, 0xFFE0B040, 0xFFA1887F, 0xFF9CCC65, 0xFFD7B98E, 0xFF8D6E63, 0xFFA1887F, 0xFF6D4C41};
+    public static final int[] PRODUCT_COLOR = {0xFF7CB342, 0xFFE0B040, 0xFFA1887F, 0xFF9CCC65, 0xFFD7B98E, 0xFF8D6E63, 0xFFA1887F, 0xFF6D4C41,
+            0xFF3E2723, 0xFFC9A04A, 0xFFD7C48A, 0xFF9CCC65, 0xFF2E7D32};
 
     static int productColor(int p) {
         if (p == -2) return 0xFF5D4037; // Gülle
@@ -494,7 +495,7 @@ public class MapView extends View {
         float dotR = 0;
         switch (state) {
             case Field.STUBBLE:
-                boolean light = crop == Defs.WHEAT || crop == Defs.MAIZE;
+                boolean light = crop == Defs.WHEAT || crop == Defs.MAIZE || crop == Defs.SPELT || crop == Defs.RAPE || crop == Defs.SOY;
                 base = light ? 0xFFCDB677 : 0xFF8C6A45;
                 row = light ? 0xFFB09650 : 0xFF6E5034;
                 rowW = rowSp * 0.15f;
@@ -506,6 +507,53 @@ public class MapView extends View {
                 break;
             default:
                 switch (crop) {
+                    case Defs.RAPE:
+                        if (g < 0.1) {
+                            base = SOIL;
+                            row = 0xFF7CB342;
+                            rowW = rowSp * 0.15f;
+                        } else if (g < 0.55) {
+                            base = mix(SOIL, 0xFF4E8F3A, (g - 0.1) / 0.45);
+                            row = mix(base, 0xFF2E5D22, 0.4);
+                            rowW = rowSp * 0.35f;
+                        } else if (g < 0.85) {
+                            // Rapsblüte
+                            double k = Math.min(1, (g - 0.55) / 0.1) * Math.min(1, (0.85 - g) / 0.08);
+                            base = mix(0xFF5E9440, 0xFFF4D03F, k);
+                            row = mix(base, 0xFFFFEB3B, 0.3);
+                            rowW = rowSp * 0.2f;
+                        } else {
+                            base = g < 1 ? mix(0xFF7F8B3A, 0xFF6F5B2E, (g - 0.85) / 0.15) : 0xFF6A5530;
+                            row = mix(base, 0xFF000000, 0.15);
+                            rowW = rowSp * 0.12f;
+                        }
+                        break;
+                    case Defs.SOY:
+                        base = g < 1 ? mix(SOIL, 0xFF6B8E23, Math.min(1, g * 1.3)) : 0xFFA88B4F;
+                        row = mix(base, 0xFF000000, 0.15);
+                        rowW = rowSp * 0.2f;
+                        dotColor = g < 0.85 ? mix(0xFF8BC34A, 0xFF4E7D24, g) : mix(0xFF8D8A3C, 0xFFB59B5A, Math.min(1, (g - 0.85) / 0.15));
+                        dotR = (float) (0.15 + 0.45 * Math.min(1, g)) * rowSp * 0.4f;
+                        if (g < 0.05) dotR = 0;
+                        break;
+                    case Defs.SALAD:
+                        base = SOIL;
+                        row = 0xFF8E6A45;
+                        rowW = rowSp * 0.4f;
+                        dotColor = g < 1 ? mix(0xFFC5E1A5, 0xFF7CB342, g) : 0xFF8BC34A;
+                        dotR = (float) (0.15 + 0.5 * Math.min(1, g)) * rowSp * 0.42f;
+                        if (g < 0.03) dotR = 0;
+                        break;
+                    case Defs.MELON:
+                        base = mix(SOIL, 0xFF55803A, Math.min(1, g * 1.2) * 0.8);
+                        row = mix(base, 0xFF2E5D22, 0.35);
+                        rowW = rowSp * 0.5f;
+                        if (g > 0.5) {
+                            dotColor = 0xFF2E6B2E;
+                            dotR = (float) Math.min(1, (g - 0.5) * 2) * rowSp * 0.38f;
+                        }
+                        break;
+                    case Defs.SPELT:
                     case Defs.WHEAT:
                         if (g < 0.1) {
                             base = SOIL;
@@ -523,6 +571,11 @@ public class MapView extends View {
                             base = 0xFFE3B341;
                             row = 0xFFC99A2E;
                             rowW = rowSp * 0.12f;
+                        }
+                        if (crop == Defs.SPELT) {
+                            // Dinkel: etwas dunkler, rötlich-braun reif
+                            base = mix(base, g >= 0.8 ? 0xFFB07A3A : 0xFF4F7A2A, 0.25);
+                            row = mix(row, 0xFF6D4C2A, 0.2);
                         }
                         break;
                     case Defs.MAIZE:
@@ -570,11 +623,23 @@ public class MapView extends View {
             for (float y = t + rowSp / 2; y < b; y += rowSp) c.drawLine(l + 1, y, rr - 1, y, stroke);
         }
         // reifer Weizen: Ähren-Struktur
-        if (state == Field.GROWING && crop == Defs.WHEAT && g >= 1 && fine) {
+        if (state == Field.GROWING && (crop == Defs.WHEAT || crop == Defs.SPELT) && g >= 1 && fine) {
             fill.setColor(0x33FFF59D);
             Random rnd = new Random(seed * 7919L);
             int n = (int) ((rr - l) * (b - t) / 40);
             for (int i = 0; i < Math.min(n, 400); i++) c.drawCircle(l + rnd.nextFloat() * (rr - l), t + rnd.nextFloat() * (b - t), 1.2f, fill);
+        }
+        if (state == Field.GROWING && crop == Defs.SALAD && dotR > 0 && fine) {
+            float dotSp = Math.max(rowSp * 0.6f, 4f / scale);
+            fill.setColor(0x99F1F8E9);
+            for (float y = t + rowSp / 2; y < b; y += rowSp)
+                for (float x = l + dotSp / 2; x < rr; x += dotSp) c.drawCircle(x, y, dotR * 0.4f, fill);
+        }
+        if (state == Field.GROWING && crop == Defs.MELON && dotR > 0 && fine) {
+            float dotSp = Math.max(rowSp * 0.6f, 4f / scale);
+            fill.setColor(0xFF7CB342);
+            for (float y = t + rowSp / 2; y < b; y += rowSp)
+                for (float x = l + dotSp / 2; x < rr; x += dotSp) c.drawCircle(x - dotR * 0.25f, y - dotR * 0.25f, dotR * 0.35f, fill);
         }
         // Dünger
         if (fert && state == Field.GROWING && g < 1 && fine) {
@@ -1167,7 +1232,7 @@ public class MapView extends View {
             float px = sx(v.x), py = sy(v.y) - Math.max(34, 7 * scale);
             if (px < -50 || py < -50 || px > getWidth() + 50 || py > getHeight() + 50) continue;
             double pct = v.load / cap;
-            String icon = v.loadProduct == -2 ? "💧" : v.loadProduct == -3 ? "💩" : v.loadProduct >= Defs.WOOD ? "🪵"
+            String icon = v.loadProduct == -2 ? "💧" : v.loadProduct == -3 ? "💩" : Defs.isWood(v.loadProduct) ? "🪵"
                     : v.loadProduct == Defs.CHIPS ? "🪵" : "🌾";
             bar(c, px, py, (float) pct, icon + " " + Math.round(pct * 100) + " %", fillColor(pct));
         }

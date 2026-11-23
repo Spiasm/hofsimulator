@@ -12,28 +12,43 @@ public final class Defs {
     public static final double FIELD_PRICE_HA = 35000;
 
     // ------------------------------------------------------------- Früchte
-    public static final int GRASS = 0, WHEAT = 1, POTATO = 2, MAIZE = 3;
-    public static final String[] CROP_NAMES = {"Wiese/Gras", "Weizen", "Kartoffeln", "Mais"};
-    /** Produkte: 0–3 Feldfrüchte, 4 Hackschnitzel, 5–7 Holz je Baumart */
-    public static final int PRODUCTS = 8, CHIPS = 4, WOOD = 5;
+    public static final int GRASS = 0, WHEAT = 1, POTATO = 2, MAIZE = 3, RAPE = 4, SPELT = 5, SOY = 6, SALAD = 7, MELON = 8, CROPS = 9;
+    public static final String[] CROP_NAMES = {"Wiese/Gras", "Weizen", "Kartoffeln", "Mais", "Raps", "Dinkel", "Soja", "Salat",
+            "Wassermelonen"};
+    public static final String[] CROP_ICON = {"🌿", "🌾", "🥔", "🌽", "🌼", "🌾", "🫘", "🥬", "🍉"};
+    /** Reihenfolge im Auswahl-Menü */
+    public static final int[] CROP_ORDER = {WHEAT, SPELT, RAPE, SOY, MAIZE, POTATO, SALAD, MELON, GRASS};
+    /** Produkte: 0–3 Feldfrüchte, 4 Hackschnitzel, 5–7 Holz je Baumart, 8–12 neue Feldfrüchte (Raps … Melonen) */
+    public static final int PRODUCTS = 13, CHIPS = 4, WOOD = 5;
     public static final String[] PRODUCT_NAMES = {"Gras-Silage", "Weizen", "Kartoffeln", "Mais-Silage", "Hackschnitzel",
-            "Fichtenholz", "Buchenholz", "Eichenholz"};
+            "Fichtenholz", "Buchenholz", "Eichenholz", "Raps", "Dinkel", "Soja", "Salat", "Wassermelonen"};
+
+    public static boolean isWood(int product) {
+        return product >= WOOD && product < WOOD + 3;
+    }
+
+    /** Produkt-Nummer einer Feldfrucht */
+    public static int productOf(int crop) {
+        return crop < 4 ? crop : crop + 4;
+    }
+
     /** Wachstumsdauer in Tagen */
-    public static final double[] GROW_DAYS = {3, 7, 8, 8};
+    public static final double[] GROW_DAYS = {3, 7, 8, 8, 9, 8, 9, 4, 10};
     /** Ertrag in t/ha (gedüngt; ungedüngt 80 %) */
-    public static final double[] YIELD = {9, 8.5, 42, 48};
-    /** Saatgut €/ha */
-    public static final double[] SEED_COST = {130, 110, 1300, 230};
+    public static final double[] YIELD = {9, 8.5, 42, 48, 4, 6, 3.3, 25, 35};
+    /** Saatgut bzw. Jungpflanzen €/ha */
+    public static final double[] SEED_COST = {130, 110, 1300, 230, 120, 130, 160, 2500, 3000};
     // ------------------------------------------------------------- Händler
     public static final int B_LANDHANDEL = 0, B_MILL = 1, B_BIOGAS = 2, B_SAWMILL = 3, BUYERS = 4;
     public static final String[] BUYER_NAMES = {"Landhandel", "Mühle", "Biogasanlage", "Sägewerk"};
     public static final String[] BUYER_TO = {"zum Landhandel", "zur Mühle", "zur Biogasanlage", "zum Sägewerk"};
     /** Grundpreis €/t je Händler und Produkt; 0 = kauft nicht */
     public static final double[][] BUY_BASE = {
-            {0, 228, 190, 0, 0, 0, 0, 0},
-            {0, 240, 0, 0, 0, 0, 0, 0},
-            {40, 0, 0, 48, 35, 0, 0, 0},
-            {0, 0, 0, 0, 0, 70, 95, 180}};
+            //Gras Weiz Kart Mais Hack Fi  Bu  Ei  Raps Dink Soja Salat Melone
+            {0, 228, 190, 0, 0, 0, 0, 0, 460, 315, 520, 260, 300},
+            {0, 240, 0, 0, 0, 0, 0, 0, 0, 340, 0, 0, 0},
+            {40, 0, 0, 48, 35, 0, 0, 0, 0, 0, 0, 0, 0},
+            {0, 0, 0, 0, 0, 70, 95, 180, 0, 0, 0, 0, 0}};
     /** Wie stark die Preise schwanken (Mühle stärker) */
     public static final double[] BUY_VOLATILITY = {0.025, 0.045, 0.02, 0.03};
 
@@ -72,12 +87,13 @@ public final class Defs {
     public static final String[] F_KIND_NAMES = {"Prozessor/Harvester", "Forwarder", "Holz-Lkw"};
     /** Geräte-Arten */
     public static final int T_GRUBBER = 0, T_SEEDER = 1, T_PLANTER = 2, T_SPREADER = 3, T_TRAILER = 4, T_MOWER = 5, T_LOADER = 6,
-            T_SLURRY = 7, T_MANURE = 8, T_TREEPLANT = 9, T_FWDTRAILER = 10, T_CHIPPER = 11, T_LOGTRAILER = 12;
+            T_SLURRY = 7, T_MANURE = 8, T_TREEPLANT = 9, T_FWDTRAILER = 10, T_CHIPPER = 11, T_LOGTRAILER = 12, T_VEGPLANT = 13;
     public static final String[] T_KIND_NAMES = {"Grubber", "Sämaschine", "Kartoffel-Legemaschine", "Düngerstreuer", "Kipper",
-            "Mähwerk", "Ladewagen", "Güllefass", "Miststreuer", "Pflanzmaschine", "Rückewagen", "Holzhacker", "Kurzholzanhänger"};
+            "Mähwerk", "Ladewagen", "Güllefass", "Miststreuer", "Pflanzmaschine", "Rückewagen", "Holzhacker", "Kurzholzanhänger",
+            "Gemüse-Pflanzmaschine"};
     /** Erntemaschinen-Arten */
-    public static final int H_COMBINE = 0, H_CHOPPER = 1, H_POTATO = 2;
-    public static final String[] H_KIND_NAMES = {"Mähdrescher", "Feldhäcksler", "Kartoffelroder"};
+    public static final int H_COMBINE = 0, H_CHOPPER = 1, H_POTATO = 2, H_VEG = 3;
+    public static final String[] H_KIND_NAMES = {"Mähdrescher", "Feldhäcksler", "Kartoffelroder", "Gemüse-Vollernter"};
 
     public static final class Model {
         public final int id, kind, sub, level;
@@ -201,6 +217,11 @@ public final class Defs {
             harvester(H_POTATO, "Kartoffelroder Knolle 1", 60000, 0.35, 0, 5, 20, 35, 7f, 3.0f, 0xFFFFA000),
             harvester(H_POTATO, "Kartoffelroder Knolle 2", 120000, 0.6, 0, 8, 20, 50, 8f, 3.3f, 0xFFEF6C00),
             harvester(H_POTATO, "Kartoffelroder Knolle 4", 280000, 1.1, 0, 15, 25, 75, 9.5f, 3.6f, 0xFFE65100),
+            // ---- neu (immer hinten anhängen, sonst passen alte Spielstände nicht mehr)
+            tool(T_VEGPLANT, "Gemüse-Pflanzmaschine 4-reihig", "4-reihig, für Salat & Melonen", 2, 30000, 0.7, 0, 3.0f, 3.0f),
+            tool(T_VEGPLANT, "Gemüse-Pflanzmaschine 8-reihig", "8-reihig, für Salat & Melonen", 4, 62000, 1.4, 0, 3.6f, 5.5f),
+            harvester(H_VEG, "Gemüse-Vollernter Frisch 1", 150000, 0.4, 0, 6, 18, 40, 7.5f, 3.2f, 0xFF00897B),
+            harvester(H_VEG, "Gemüse-Vollernter Frisch 2", 310000, 0.8, 0, 12, 20, 60, 9f, 3.6f, 0xFF00695C),
     };
 
     public static Model model(int id) {
@@ -214,9 +235,17 @@ public final class Defs {
 
     /** Erntemaschinen-Art für eine Frucht */
     public static int harvesterFor(int crop) {
-        if (crop == WHEAT) return H_COMBINE;
+        if (crop == WHEAT || crop == RAPE || crop == SPELT || crop == SOY) return H_COMBINE;
         if (crop == POTATO) return H_POTATO;
+        if (crop == SALAD || crop == MELON) return H_VEG;
         return H_CHOPPER;
+    }
+
+    /** Sä-/Pflanzgerät für eine Frucht */
+    public static int sowToolFor(int crop) {
+        if (crop == POTATO) return T_PLANTER;
+        if (crop == SALAD || crop == MELON) return T_VEGPLANT;
+        return T_SEEDER;
     }
 
     /** Ernteleistung ha/h einer Erntemaschine für eine Frucht */
