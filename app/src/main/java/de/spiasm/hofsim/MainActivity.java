@@ -247,6 +247,8 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             "🗺 Karte: Mit einem Finger verschieben, mit zwei Fingern zoomen.\n\n"
                     + "🌾 Felder: Antippen zeigt Zustand und Preis. Deine Felder haben einen gelben Rand und ★.\n"
                     + "Ablauf: Grubbern → Säen → (Düngen) → wachsen lassen → Ernten → von vorn.\n"
+                    + "Grubbern geht immer – auch wenn noch etwas wächst (das wird dann untergearbeitet). So kannst du ein "
+                    + "gekauftes Feld sofort auf deine Frucht umstellen.\n"
                     + "Gras: erst mit dem Mähwerk mähen, dann mit Ladewagen oder Feldhäcksler einsammeln. Danach wächst es nach.\n\n"
                     + "🚜 Maschinen: Antippen, dann wählen: Feldarbeit, Verkaufen, Futter bringen oder Hinfahren.\n"
                     + "Oder direkt auf einem Feld z. B. „Grubbern“ tippen – dann wird eine freie Maschine geschickt.\n"
@@ -773,7 +775,30 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     }
 
     /** Feldarbeit vom Feld aus: passende Maschine automatisch wählen */
+    /** Grubbern auf einem Feld, auf dem noch etwas wächst: erst nachfragen */
+    private void confirmPlowUnder(final Field f, final int task, final Runnable go) {
+        if (task != Defs.TASK_CULTIVATE || f.state != Field.GROWING || f.progress > 0) {
+            go.run();
+            return;
+        }
+        String what = Defs.CROP_NAMES[f.crop];
+        new AlertDialog.Builder(this).setTitle("Feld " + f.number + " umgrubbern?")
+                .setMessage(String.format(Locale.GERMANY, "Auf dem Feld wächst gerade %s (%.0f %%).\n\n"
+                        + "Beim Grubbern wird alles untergearbeitet und ist weg – danach kannst du neu säen, was du willst.", what,
+                        Math.min(100, f.growth * 100)))
+                .setPositiveButton("Ja, grubbern", (d, w) -> go.run())
+                .setNegativeButton("Abbrechen", null).show();
+    }
+
     private void autoTask(final Field f, final int task) {
+        if (task == Defs.TASK_CULTIVATE && f.state == Field.GROWING && f.progress <= 0 && !plowConfirmed) {
+            confirmPlowUnder(f, task, () -> {
+                plowConfirmed = true;
+                autoTask(f, task);
+                plowConfirmed = false;
+            });
+            return;
+        }
         if (task == Defs.TASK_SOW && f.progress <= 0) {
             chooseCrop(f, crop -> autoTaskCrop(f, task, crop));
         } else if (task == Defs.TASK_FERTILIZE && f.progress <= 0) {
@@ -839,6 +864,8 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     }
 
     /** Maschine → Feld → Arbeit wählen */
+    private boolean plowConfirmed;
+
     private void chooseTaskFor(final Game.Vehicle v, final Field f) {
         List<String> labels = new ArrayList<>();
         final List<Integer> tasks = new ArrayList<>();
@@ -887,9 +914,11 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                             showVehiclePanel(v);
                         });
                     } else {
-                        String err = act("field", "v", v.id, "f", f.index, "t", task, "c", f.taskCrop >= 0 ? f.taskCrop : Defs.WHEAT);
-                        if (err != null) toast(err);
-                        showVehiclePanel(v);
+                        confirmPlowUnder(f, task, () -> {
+                            String err = act("field", "v", v.id, "f", f.index, "t", task, "c", f.taskCrop >= 0 ? f.taskCrop : Defs.WHEAT);
+                            if (err != null) toast(err);
+                            showVehiclePanel(v);
+                        });
                     }
                 }).show();
     }

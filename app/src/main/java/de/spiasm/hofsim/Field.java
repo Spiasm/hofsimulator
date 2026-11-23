@@ -57,7 +57,7 @@ public class Field {
         if (task != -1 && progress > 0) return t == task;
         switch (t) {
             case Defs.TASK_CULTIVATE:
-                return state == STUBBLE || (state == GROWING && crop == Defs.GRASS);
+                return state == STUBBLE || state == GROWING; // Grubbern geht immer – was wächst, wird untergearbeitet
             case Defs.TASK_SOW:
                 return state == CULTIVATED;
             case Defs.TASK_FERTILIZE:
