@@ -610,43 +610,33 @@ public class MapView extends View {
         stroke.setStrokeCap(Paint.Cap.BUTT);
         for (float y = t + rowSp / 2; y < b; y += rowSp) c.drawLine(l + 0.5f, y, rr - 0.5f, y, stroke);
         stroke.setStrokeCap(Paint.Cap.ROUND);
-        // Pflanzen
-        if (dotR > 0 && fine) {
-            float dotSp = Math.max(rowSp * 0.6f, 4f / scale);
-            fill.setColor(dotColor);
-            for (float y = t + rowSp / 2; y < b; y += rowSp) {
-                for (float x = l + dotSp / 2; x < rr; x += dotSp) c.drawCircle(x, y, dotR, fill);
-            }
-        } else if (dotR > 0) {
+        // Pflanzen: als gerade Bahnen (einzelne Punkte wären viel zu viele zum Zeichnen)
+        if (dotR > 0) {
             stroke.setColor(dotColor);
             stroke.setStrokeWidth(dotR * 1.6f);
+            stroke.setStrokeCap(Paint.Cap.BUTT);
             for (float y = t + rowSp / 2; y < b; y += rowSp) c.drawLine(l + 1, y, rr - 1, y, stroke);
+            if (fine && (crop == Defs.SALAD || crop == Defs.MELON)) {
+                // hellere Mittellinie für etwas Struktur
+                stroke.setColor(crop == Defs.SALAD ? 0x99F1F8E9 : 0xFF7CB342);
+                stroke.setStrokeWidth(dotR * 0.45f);
+                for (float y = t + rowSp / 2; y < b; y += rowSp) c.drawLine(l + 1, y, rr - 1, y, stroke);
+            }
+            stroke.setStrokeCap(Paint.Cap.ROUND);
         }
         // reifer Weizen: Ähren-Struktur
         if (state == Field.GROWING && (crop == Defs.WHEAT || crop == Defs.SPELT) && g >= 1 && fine) {
             fill.setColor(0x33FFF59D);
             Random rnd = new Random(seed * 7919L);
             int n = (int) ((rr - l) * (b - t) / 40);
-            for (int i = 0; i < Math.min(n, 400); i++) c.drawCircle(l + rnd.nextFloat() * (rr - l), t + rnd.nextFloat() * (b - t), 1.2f, fill);
-        }
-        if (state == Field.GROWING && crop == Defs.SALAD && dotR > 0 && fine) {
-            float dotSp = Math.max(rowSp * 0.6f, 4f / scale);
-            fill.setColor(0x99F1F8E9);
-            for (float y = t + rowSp / 2; y < b; y += rowSp)
-                for (float x = l + dotSp / 2; x < rr; x += dotSp) c.drawCircle(x, y, dotR * 0.4f, fill);
-        }
-        if (state == Field.GROWING && crop == Defs.MELON && dotR > 0 && fine) {
-            float dotSp = Math.max(rowSp * 0.6f, 4f / scale);
-            fill.setColor(0xFF7CB342);
-            for (float y = t + rowSp / 2; y < b; y += rowSp)
-                for (float x = l + dotSp / 2; x < rr; x += dotSp) c.drawCircle(x - dotR * 0.25f, y - dotR * 0.25f, dotR * 0.35f, fill);
+            for (int i = 0; i < Math.min(n, 120); i++) c.drawCircle(l + rnd.nextFloat() * (rr - l), t + rnd.nextFloat() * (b - t), 1.2f, fill);
         }
         // Dünger
         if (fert && state == Field.GROWING && g < 1 && fine) {
             fill.setColor(0xCCFFFFFF);
             Random rnd = new Random(seed * 31L + 5);
             int n = (int) ((rr - l) * (b - t) / 60);
-            for (int i = 0; i < Math.min(n, 500); i++) c.drawCircle(l + rnd.nextFloat() * (rr - l), t + rnd.nextFloat() * (b - t), 0.35f, fill);
+            for (int i = 0; i < Math.min(n, 120); i++) c.drawCircle(l + rnd.nextFloat() * (rr - l), t + rnd.nextFloat() * (b - t), 0.35f, fill);
         }
     }
 
