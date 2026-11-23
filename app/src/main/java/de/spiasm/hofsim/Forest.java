@@ -11,6 +11,8 @@ public class Forest {
     public int[] gate;
 
     public boolean owned;
+    /** Besitzer: -1 niemand, sonst Hof-Nummer (Mehrspieler) */
+    public int owner = -1;
     public int state = GROWING;
     public int species = Defs.SPRUCE;
     public double growth;

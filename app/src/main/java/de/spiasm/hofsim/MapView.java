@@ -274,13 +274,20 @@ public class MapView extends View {
             if (!visible(b.r, vl, vt, vr, vb)) continue;
             drawBuilding(c, b);
         }
-        drawHof(c);
+        final int local = game.currentFarm();
+        for (int fp = 0; fp < game.farmCount(); fp++) {
+            game.select(fp);
+            drawHof(c);
+            for (int s = 0; s < Defs.STABLES; s++) {
+                if ((fp == local || game.stables[s]) && visible(wo.stableLot[s], vl, vt, vr, vb)) drawStableLot(c, s);
+            }
+        }
+        game.select(local);
         for (Forest fo : wo.forests) {
             int[] fr = {fo.x, fo.y, fo.w, fo.h};
             if (visible(fr, vl, vt, vr, vb)) drawForest(c, fo);
         }
         for (int i = 0; i < Defs.BUYERS; i++) if (visible(wo.trader[i], vl, vt, vr, vb)) drawTrader(c, wo.trader[i], i);
-        for (int s = 0; s < Defs.STABLES; s++) if (visible(wo.stableLot[s], vl, vt, vr, vb)) drawStableLot(c, s);
 
         updateWeatherShown();
         drawSnowCover(c, vl, vt, vr, vb);
@@ -296,6 +303,8 @@ public class MapView extends View {
             c.drawPath(path, stroke);
         }
         // abgestellte Geräte im Hof
+        for (int fp = 0; fp < game.farmCount(); fp++) {
+        game.select(fp);
         int spot = 0;
         for (Game.Tool t : game.tools) {
             if (t.attachedTo != -1) continue;
@@ -310,7 +319,7 @@ public class MapView extends View {
             drawTool(c, m, (m.len + 0.6f) / 2f, null);
             c.restore();
         }
-        if (detail >= 1) {
+        if (detail >= 1 && fp == 0) {
             for (Game.Car car : game.cars) {
                 if (car.x < vl || car.x > vr || car.y < vt || car.y > vb) continue;
                 drawCar(c, car);
@@ -321,14 +330,20 @@ public class MapView extends View {
             if (detail == 2 && v.working() && fxRnd.nextFloat() < 0.5f) spawnDust(v);
             drawVehicle(c, v, v.id == selectedVehicle);
         }
+        for (int[] wnd : game.winds) drawWind(c, wnd);
+        }
+        game.select(local);
         if (detail == 2) drawDust(c);
         if (game.fireField >= 0) drawFire(c);
         if (game.fireTruck != null) drawFireTruck(c, game.fireTruck);
-        for (int[] wnd : game.winds) drawWind(c, wnd);
         c.restore();
 
         drawWeather(c, w, h);
-        drawIndicators(c);
+        for (int fp = 0; fp < game.farmCount(); fp++) {
+            game.select(fp);
+            drawIndicators(c);
+        }
+        game.select(local);
         drawLabels(c);
     }
 
@@ -433,8 +448,8 @@ public class MapView extends View {
             }
         }
         // Rand
-        if (f.owned) {
-            stroke.setColor(0xFFFFEB3B);
+        if (f.owned || f.owner >= 0) {
+            stroke.setColor(Game.FARM_COLOR[Math.max(0, f.owner) % 3]);
             stroke.setStrokeWidth(Math.max(1.2f, 3f / scale));
         } else {
             stroke.setColor(0x66000000);
@@ -1029,8 +1044,9 @@ public class MapView extends View {
             float size = (float) Math.min(9, 3 + fo.polter / 15);
             drawLogPile(c, px, py, size, size * 0.6f);
         }
-        stroke.setColor(fo.owned ? 0xFFFFEB3B : 0x66000000);
-        stroke.setStrokeWidth(fo.owned ? Math.max(1.2f, 3f / scale) : Math.max(0.8f, 1.5f / scale));
+        boolean anyOwner = fo.owned || fo.owner >= 0;
+        stroke.setColor(anyOwner ? Game.FARM_COLOR[Math.max(0, fo.owner) % 3] : 0x66000000);
+        stroke.setStrokeWidth(anyOwner ? Math.max(1.2f, 3f / scale) : Math.max(0.8f, 1.5f / scale));
         c.drawRect(l, t, rr, b, stroke);
         if (fo.index == selectedForest) {
             stroke.setColor(0xFFFFFFFF);
@@ -1549,26 +1565,32 @@ public class MapView extends View {
         for (Field f : w.fields) {
             float cx = sx((f.x + f.w / 2f) * Defs.TILE), cy = sy((f.y + f.h / 2f) * Defs.TILE);
             if (cx < -100 || cy < -100 || cx > getWidth() + 100 || cy > getHeight() + 100) continue;
-            text.setColor(f.owned ? 0xFFFFEB3B : 0xDDFFFFFF);
+            text.setColor(f.owner >= 0 || f.owned ? Game.FARM_COLOR[Math.max(0, f.owner) % 3] : 0xDDFFFFFF);
             c.drawText((f.owned ? "★ " : "") + f.number + (game.fireField == f.index ? " 🔥" : ""), cx, cy + ts * 0.35f, text);
         }
         for (Forest fo : w.forests) {
             float cx = sx((fo.x + fo.w / 2f) * Defs.TILE), cy = sy((fo.y + fo.h / 2f) * Defs.TILE);
             if (cx < -100 || cy < -100 || cx > getWidth() + 100 || cy > getHeight() + 100) continue;
-            text.setColor(fo.owned ? 0xFFFFEB3B : 0xDDFFFFFF);
+            text.setColor(fo.owner >= 0 || fo.owned ? Game.FARM_COLOR[Math.max(0, fo.owner) % 3] : 0xDDFFFFFF);
             c.drawText((fo.owned ? "★ " : "") + "🌲" + fo.number, cx, cy + ts * 0.35f, text);
         }
         text.setColor(0xFFFFFFFF);
         text.setTextSize(ts * 0.8f);
-        label(c, w.hof, "🏠 Dein Hof");
+        int local = game.currentFarm();
+        for (int fp = 0; fp < game.farmCount(); fp++) {
+            game.select(fp);
+            label(c, w.hof, fp == local ? (game.farmCount() == 1 && game.farms[0].name.equals("Euer Hof") ? "🏠 Euer Hof" : "🏠 Dein Hof")
+                    : "🏠 Hof " + game.farms[fp].name);
+            for (int s = 0; s < Defs.STABLES; s++) {
+                if (game.stables[s]) label(c, w.stableLot[s], Defs.S_NAMES[s] + (fp == local ? "" : " (" + game.farms[fp].name + ")"));
+                else if (fp == local) label(c, w.stableLot[s], "Bauplatz " + Defs.S_ICON[s]);
+            }
+        }
+        game.select(local);
         label(c, w.trader[Defs.B_SAWMILL], "🪵 Sägewerk");
         label(c, w.trader[Defs.B_LANDHANDEL], "🌾 Landhandel");
         label(c, w.trader[Defs.B_MILL], "🏭 Mühle");
         label(c, w.trader[Defs.B_BIOGAS], "⚡ Biogas");
-        for (int s = 0; s < Defs.STABLES; s++) {
-            if (game.stables[s]) label(c, w.stableLot[s], Defs.S_NAMES[s]);
-            else label(c, w.stableLot[s], "Bauplatz " + Defs.S_ICON[s]);
-        }
         if (scale < 2.5f) {
             text.setColor(0xCCFFF9C4);
             for (int i = 0; i < w.villageCenters.size(); i++) {

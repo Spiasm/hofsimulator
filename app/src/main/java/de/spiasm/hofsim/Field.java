@@ -9,6 +9,8 @@ public class Field {
     public final int x, y, w, h;
 
     public boolean owned;
+    /** Besitzer: -1 niemand, sonst Hof-Nummer (Mehrspieler) */
+    public int owner = -1;
     public int state = STUBBLE;
     /** Frucht (oder -1) – bei Stoppeln die zuletzt geerntete Frucht */
     public int crop = Defs.WHEAT;

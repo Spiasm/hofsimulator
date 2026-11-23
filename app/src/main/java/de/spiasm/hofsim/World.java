@@ -49,9 +49,95 @@ public class World {
     public final List<int[]> villageCenters = new ArrayList<>();
     private boolean hofBelow;
 
+    // ---- mehrere Höfe (Mehrspieler). Die Felder oben zeigen immer den gerade gewählten Hof.
+    public final int farms;
+    public final int[][] farmHof, farmHouse, farmHall, farmSilo, farmGate;
+    public final boolean[] farmBelow;
+    public final int[][][] farmStableLot, farmStableGate;
+    private int curFarm;
+
     public World(long seed) {
+        this(seed, 1);
+    }
+
+    public World(long seed, int farms) {
         this.seed = seed;
+        this.farms = Math.max(1, Math.min(3, farms));
+        farmHof = new int[this.farms][];
+        farmHouse = new int[this.farms][];
+        farmHall = new int[this.farms][];
+        farmSilo = new int[this.farms][];
+        farmGate = new int[this.farms][];
+        farmBelow = new boolean[this.farms];
+        farmStableLot = new int[this.farms][Defs.STABLES][];
+        farmStableGate = new int[this.farms][Defs.STABLES][];
         generate(new Random(seed));
+        useFarm(0);
+    }
+
+    /** Hof p „auswählen“: hof, house, hall, silo, Stallplätze usw. zeigen danach auf diesen Hof */
+    public void useFarm(int p) {
+        curFarm = p;
+        hof = farmHof[p];
+        house = farmHouse[p];
+        hall = farmHall[p];
+        silo = farmSilo[p];
+        hofGate = farmGate[p];
+        hofBelow = farmBelow[p];
+        for (int s = 0; s < Defs.STABLES; s++) {
+            stableLot[s] = farmStableLot[p][s];
+            stableGate[s] = farmStableGate[p][s];
+        }
+    }
+
+    public int currentFarm() {
+        return curFarm;
+    }
+
+    private void saveFarm(int p) {
+        farmHof[p] = hof;
+        farmHouse[p] = house;
+        farmHall[p] = hall;
+        farmSilo[p] = silo;
+        farmGate[p] = hofGate;
+        farmBelow[p] = hofBelow;
+    }
+
+    /** Hof (14×10) an einer waagrechten Straße bauen */
+    private boolean buildHofAt(int hx, int hy, boolean below) {
+        int hw = 14, hh = 10;
+        int hyy = below ? hy + 1 : hy - hh;
+        int[] rect = {hx, hyy, hw, hh};
+        if (hx < 2 || hx + hw > n - 2 || hyy < 2 || hyy + hh > n - 2) return false;
+        for (int i = hx; i < hx + hw; i++) if (tile[i][hy] != ROAD) return false;
+        if (!areaIs(rect, GRASS, 0)) return false;
+        hof = rect;
+        hofBelow = below;
+        fill(hof, YARD);
+        int bTop = below ? hyy + 6 : hyy + 1;
+        house = new int[]{hx + 1, bTop, 3, 3};
+        hall = new int[]{hx + 5, bTop, 5, 3};
+        silo = new int[]{hx + 11, bTop, 2, 2};
+        fill(house, BUILDING);
+        fill(hall, BUILDING);
+        fill(silo, BUILDING);
+        hofGate = new int[]{hx + 6, hy};
+        return true;
+    }
+
+    private void placeExtraHof(Random r, List<int[]> taken) {
+        for (int k = 0; k < 20000; k++) {
+            int x = 3 + r.nextInt(n - 20), y = 12 + r.nextInt(n - 24);
+            if (tile[x][y] != ROAD || tile[x + 13][y] != ROAD) continue;
+            boolean ok = true;
+            for (int[] a : taken) if (Math.abs(x - a[0]) + Math.abs(y - a[1]) < (k < 12000 ? 40 : 22)) ok = false;
+            if (!ok) continue;
+            boolean below = r.nextBoolean();
+            if (buildHofAt(x, y, below) || buildHofAt(x, y, !below)) return;
+        }
+        // Notlösung: neben Hof 0
+        int[] h0 = farmHof[0];
+        if (!buildHofAt(h0[0] + 16, farmGate[0][1], farmBelow[0])) buildHofAt(h0[0] - 16, farmGate[0][1], farmBelow[0]);
     }
 
     // ---------------------------------------------------------------- Erzeugung
@@ -97,22 +183,39 @@ public class World {
         fill(hall, BUILDING);
         fill(silo, BUILDING);
         hofGate = new int[]{hx + 6, hy};
+        saveFarm(0);
+        List<int[]> hofs = new ArrayList<>();
+        hofs.add(hof);
+        for (int p = 1; p < farms; p++) {
+            placeExtraHof(r, hofs);
+            saveFarm(p);
+            hofs.add(hof);
+        }
+        useFarm(0);
 
         // Händler
-        int[][] avoid = {hof};
+        int[][] avoid = hofs.toArray(new int[0][]);
         trader[Defs.B_LANDHANDEL] = place(r, 8, 6, BUILDING, 30, avoid);
-        trader[Defs.B_MILL] = place(r, 7, 7, BUILDING, 30, new int[][]{hof, trader[0]});
-        trader[Defs.B_BIOGAS] = place(r, 9, 8, BUILDING, 30, new int[][]{hof, trader[0], trader[1]});
-        trader[Defs.B_SAWMILL] = place(r, 10, 7, BUILDING, 30, new int[][]{hof, trader[0], trader[1], trader[2]});
+        List<int[]> av = new ArrayList<>(hofs);
+        av.add(trader[0]);
+        trader[Defs.B_MILL] = place(r, 7, 7, BUILDING, 30, av.toArray(new int[0][]));
+        av.add(trader[1]);
+        trader[Defs.B_BIOGAS] = place(r, 9, 8, BUILDING, 30, av.toArray(new int[0][]));
+        av.add(trader[2]);
+        trader[Defs.B_SAWMILL] = place(r, 10, 7, BUILDING, 30, av.toArray(new int[0][]));
         for (int i = 0; i < Defs.BUYERS; i++) traderGate[i] = gateOf(trader[i]);
 
         // Stallplätze: in der Nähe vom Hof
-        List<int[]> taken = new ArrayList<>(Arrays.asList(hof, trader[0], trader[1], trader[2], trader[3]));
-        for (int s = 0; s < Defs.STABLES; s++) {
-            stableLot[s] = placeNear(r, 12, 9, hof, 12, 55, taken);
-            taken.add(stableLot[s]);
-            stableGate[s] = gateOf(stableLot[s]);
+        List<int[]> taken = new ArrayList<>(Arrays.asList(trader[0], trader[1], trader[2], trader[3]));
+        taken.addAll(hofs);
+        for (int p = 0; p < farms; p++) {
+            for (int s = 0; s < Defs.STABLES; s++) {
+                farmStableLot[p][s] = placeNear(r, 12, 9, farmHof[p], 12, farms > 1 ? 40 : 55, taken);
+                taken.add(farmStableLot[p][s]);
+                farmStableGate[p][s] = gateOf(farmStableLot[p][s]);
+            }
         }
+        useFarm(0);
 
         // Dörfer
         String[] names = {"Oberbach", "Isarmoos", "Kleinvils", "Hinterholz", "Grünwies"};

@@ -29,7 +29,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-public class MainActivity extends Activity implements Game.Listener, MapView.TapListener {
+public class MainActivity extends Activity implements Game.Listener, MapView.TapListener, Net.Listener {
     private static final int BG = 0xFF1F2A1A;
     private static final int BTN = 0xFF3B4A30;
     private static final int GREEN = 0xFF2E7D32;
@@ -148,6 +148,15 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         } else if (panel != null && panel.getVisibility() == View.VISIBLE) {
             hidePanel();
         } else if (game != null && map != null) {
+            if (multiplayer()) {
+                new AlertDialog.Builder(this).setMessage(isClient ? "Spiel verlassen?" : "Spiel speichern und beenden? Die Mitspieler fliegen dann raus.")
+                        .setPositiveButton("Ja", (d, w) -> {
+                            save(true);
+                            running = false;
+                            showStart();
+                        }).setNegativeButton("Nein", null).show();
+                return;
+            }
             save(true);
             running = false;
             showStart();
@@ -161,10 +170,10 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     }
 
     private void save(boolean announce) {
-        if (game == null) return;
+        if (game == null || isClient) return;
         try {
             String s = game.toJson().toString();
-            try (FileOutputStream out = new FileOutputStream(saveFile())) {
+            try (FileOutputStream out = new FileOutputStream(multiplayer() ? mpFile() : saveFile())) {
                 out.write(s.getBytes(StandardCharsets.UTF_8));
             }
             if (announce) toast("💾 Gespeichert");
@@ -174,7 +183,10 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     }
 
     private Game load() {
-        File f = saveFile();
+        return loadFrom(saveFile());
+    }
+
+    private Game loadFrom(File f) {
         if (!f.exists()) return null;
         try (FileInputStream in = new FileInputStream(f)) {
             byte[] data = new byte[(int) f.length()];
@@ -193,6 +205,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     private void showStart() {
         map = null;
         sound.stop();
+        closeNet();
         ScrollView sv = new ScrollView(this);
         sv.setBackgroundColor(BG);
         sv.setFillViewport(true);
@@ -224,6 +237,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                 startGame(Game.newGame(System.nanoTime()));
             }
         }));
+        add(root, button("👥  Mehrspieler (Bluetooth)", 0xFF6A1B9A, v -> showMultiMenu()));
         add(root, button("❓  Anleitung", BTN, v -> showHelp()));
         add(root, text("© 2026 SM", 13, 0xFF9DB08C, false));
         setContentView(sv);
@@ -259,6 +273,10 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                     + "🏠 Hof antippen: 3D-Ansicht mit all deinen Maschinen, dazu Lager, Verkaufen und Futter.\n\n"
                     + "🌦 Wetter: Sonne, Wolken, Regen und im Winter Schnee – nur zum Anschauen, die Ernte leidet nicht. "
                     + "PV und Windräder zeigen ihre aktuelle Leistung in %.\n\n"
+                    + "👥 Mehrspieler (bis 3 Handys per Bluetooth): Startbildschirm → Mehrspieler. Einer erstellt das Spiel, die anderen "
+                    + "treten bei. Spielarten: gemeinsamer Hof, jeder ein eigener Hof, oder eigene Höfe + helfen (Fahrzeug antippen → "
+                    + "„Verleihen“, Verkaufen → „an Mitspieler“). Die Felder der Mitspieler haben ihre Farbe (blau/orange). "
+                    + "Der Gastgeber speichert das Spiel.\n\n"
                     + "🔊 Geräusche: im Menü ein- und ausschalten, Lautstärke für Umgebung und Maschinen getrennt einstellen.\n\n"
                     + "🔥 Bei trockenem Wetter kann ein Stoppelfeld brennen – die Feuerwehr kommt und löscht.\n\n"
                     + "🎨 Grafik: Im Menü zwischen Einfach, Mittel und Hoch umschalten.\n\n"
@@ -304,7 +322,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         row.addView(info, new LinearLayout.LayoutParams(0, -2, 1f));
         pauseBtn = small("⏸", BTN);
         pauseBtn.setOnClickListener(v -> {
-            paused = !paused;
+            act("pause", "b", !paused);
             updateTop();
         });
         speedBtn = small("", BTN);
@@ -379,6 +397,8 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                 game.updateEvents(dt * Math.min(sp, 10));
             }
             map.invalidate();
+            drainMessages();
+            if (net != null && net.host && (now - lastSnap > 1500 || (snapDirty && now - lastSnap > 250))) sendSnapshot();
             if (now - lastUi > 300) {
                 lastUi = now;
                 updateTop();
@@ -413,8 +433,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         for (int i = 1; i < Defs.SPEEDS.length; i++) items[i - 1] = Defs.SPEEDS[i] + "×   (" + desc[i - 1] + ")";
         new AlertDialog.Builder(this).setTitle("Zeit-Geschwindigkeit")
                 .setItems(items, (d, which) -> {
-                    game.speedIdx = which + 1;
-                    paused = false;
+                    act("speed", "i", which + 1);
                     updateTop();
                 }).show();
     }
@@ -436,7 +455,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             Game.Vehicle v = game.vehicle(pickVehicle);
             pickMode = PICK_NONE;
             if (v != null) {
-                String err = game.startGoto(v, tx, ty);
+                String err = act("goto", "v", v.id, "x", tx, "y", ty);
                 if (err != null) toast(err);
                 else message("👷 " + v.name() + " fährt los.");
                 showVehiclePanel(v);
@@ -453,7 +472,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             }
             new AlertDialog.Builder(this).setMessage("Windkraftanlage hier bauen für " + Game.euro(Defs.WIND_PRICE) + "?")
                     .setPositiveButton("Bauen", (d, x) -> {
-                        String err = game.buildWind(fx, fy);
+                        String err = act("wind", "x", fx, "y", fy);
                         if (err != null) toast(err);
                         else message("💨 Neue Windkraftanlage in Betrieb!");
                         updateTop();
@@ -521,6 +540,12 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         for (int b = 0; b < Defs.BUYERS; b++) {
             if (inRect(w.trader[b], tx, ty)) {
                 showTraderInfo(b);
+                return;
+            }
+        }
+        for (int f = 0; f < game.farmCount(); f++) {
+            if (f != game.currentFarm() && inRect(w.farmHof[f], tx, ty)) {
+                showOtherHof(f);
                 return;
             }
         }
@@ -631,13 +656,24 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             showPickHint("Tippe auf die Stelle, wo " + v.name() + " hinfahren soll.");
         }));
         bs.add(button("🏠 Zum Hof", BTN, x -> {
-            game.sendHome(v);
+            act("home", "v", v.id);
             message("👷 " + v.name() + " fährt zum Hof.");
         }));
         bs.add(button("⏹ Anhalten", RED, x -> {
-            game.stop(v);
+            act("stop", "v", v.id);
             message(v.name() + " hält an.");
         }));
+        if (helping()) {
+            if (v.lentFrom >= 0) {
+                bs.add(button("↩ Zurückgeben an " + game.farms[v.lentFrom].name, BTN, x -> {
+                    String err = act("ret", "v", v.id);
+                    if (err != null) toast(err);
+                    hidePanel();
+                }));
+            } else {
+                bs.add(button("🤝 Verleihen", BTN, x -> chooseLend(v)));
+            }
+        }
         addPanelButtons(bs.toArray(new Button[0]));
     }
 
@@ -654,7 +690,8 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
 
     private String fieldText(Field f) {
         String s = String.format(Locale.GERMANY, "%.1f ha • ", f.hectares()) + f.stateText();
-        if (!f.owned) s += "\nGehört einem Nachbarn – Preis: " + Game.euro(f.price());
+        if (!f.owned && f.owner >= 0) s += "\nGehört " + game.farms[f.owner].name;
+        else if (!f.owned) s += "\nGehört einem Nachbarn – Preis: " + Game.euro(f.price());
         if (f.busyBy >= 0) {
             Game.Vehicle v = game.vehicle(f.busyBy);
             if (v != null) s += "\n👷 " + v.name() + ": " + v.status;
@@ -676,13 +713,15 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         map.selectedVehicle = -1;
         openPanel((f.owned ? "★ " : "") + "Feld " + f.number, fieldText(f));
         List<Button> bs = new ArrayList<>();
-        if (!f.owned) {
+        if (!f.owned && f.owner >= 0) {
+            // gehört einem Mitspieler
+        } else if (!f.owned) {
             bs.add(button("🛒 Kaufen (" + Game.euro(f.price()) + ")", ORANGE, x -> {
                 new AlertDialog.Builder(this)
                         .setMessage("Feld " + f.number + " (" + String.format(Locale.GERMANY, "%.1f", f.hectares())
                                 + " ha) für " + Game.euro(f.price()) + " kaufen?")
                         .setPositiveButton("Kaufen", (d, w) -> {
-                            String err = game.buyField(f);
+                            String err = act("buyField", "f", f.index);
                             if (err != null) toast(err);
                             else message("🎉 Feld " + f.number + " gehört jetzt dir!");
                             showFieldPanel(f);
@@ -703,7 +742,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                                             + "Auf dem Feld kann danach nichts mehr angebaut werden.",
                                     Game.euro(game.solarParkPrice(f)), Game.euro(f.hectares() * Defs.PV_FIELD_INCOME_HA)))
                             .setPositiveButton("Bauen", (d, w) -> {
-                                String err = game.buildSolarPark(f);
+                                String err = act("solar", "f", f.index);
                                 if (err != null) toast(err);
                                 else message("☀ Solarpark auf Feld " + f.number + " in Betrieb!");
                                 showFieldPanel(f);
@@ -768,7 +807,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                     .setPositiveButton("OK", null).show();
             return;
         }
-        String err = game.startFieldJob(v, f, task, crop);
+        String err = act("field", "v", v.id, "f", f.index, "t", task, "c", crop);
         if (err != null) toast(err);
         showFieldPanel(f);
     }
@@ -837,18 +876,18 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                     int task = tasks.get(which);
                     if (task == Defs.TASK_SOW && f.progress <= 0) {
                         chooseCrop(f, crop -> {
-                            String err = game.startFieldJob(v, f, task, crop);
+                            String err = act("field", "v", v.id, "f", f.index, "t", task, "c", crop);
                             if (err != null) toast(err);
                             showVehiclePanel(v);
                         });
                     } else if (task == Defs.TASK_FERTILIZE && f.progress <= 0) {
                         chooseFert(f, mode -> {
-                            String err = game.startFieldJob(v, f, task, mode);
+                            String err = act("field", "v", v.id, "f", f.index, "t", task, "c", mode);
                             if (err != null) toast(err);
                             showVehiclePanel(v);
                         });
                     } else {
-                        String err = game.startFieldJob(v, f, task, f.taskCrop >= 0 ? f.taskCrop : Defs.WHEAT);
+                        String err = act("field", "v", v.id, "f", f.index, "t", task, "c", f.taskCrop >= 0 ? f.taskCrop : Defs.WHEAT);
                         if (err != null) toast(err);
                         showVehiclePanel(v);
                     }
@@ -882,12 +921,23 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             labels.add(Defs.BUYER_NAMES[b] + " – " + Game.euro(game.price(b, product)) + "/t" + (b == best ? "  ⭐ bester Preis" : "")
                     + (b == game.bonusBuyer && product == game.bonusProduct ? "  📢" : ""));
         }
+        if (helping()) {
+            for (int f = 0; f < game.farmCount(); f++) {
+                if (f == game.currentFarm()) continue;
+                buyers.add(100 + f);
+                labels.add("🤝 an Mitspieler " + game.farms[f].name + " (Preis selbst festlegen)");
+            }
+        }
         if (buyers.size() == 1) {
             chooseAmount(v, product, buyers.get(0));
             return;
         }
         new AlertDialog.Builder(this).setTitle("Wohin mit dem " + Defs.PRODUCT_NAMES[product] + "?")
-                .setItems(labels.toArray(new String[0]), (d, which) -> chooseAmount(v, product, buyers.get(which))).show();
+                .setItems(labels.toArray(new String[0]), (d, which) -> {
+                    int b = buyers.get(which);
+                    if (b >= 100) askTrade(product, b - 100);
+                    else chooseAmount(v, product, b);
+                }).show();
     }
 
     private void chooseAmount(final Game.Vehicle v, final int product, final int buyer) {
@@ -899,7 +949,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                         toast(game.transportProblem());
                         return;
                     }
-                    String err = game.startSellJob(tr, product, buyer, which == 1);
+                    String err = act("sell", "v", tr.id, "p", product, "b", buyer, "r", which == 1);
                     if (err != null) toast(err);
                     showVehiclePanel(tr);
                 }).show();
@@ -949,7 +999,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                                     toast(game.transportProblem());
                                     return;
                                 }
-                                String e2 = game.startFeedJob(tr, s, p, w2 == 1);
+                                String e2 = act("feed", "v", tr.id, "s", s, "p", p, "r", w2 == 1);
                                 if (e2 != null) toast(e2);
                                 else if (v == null) showVehiclePanel(tr);
                             }).show();
@@ -996,7 +1046,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         if (!game.stables[s]) {
             bs.add(button("🛒 Bauen (" + Game.euro(Defs.S_PRICE[s]) + ")", ORANGE, x ->
                     confirmBuy(Defs.S_NAMES[s], Defs.S_PRICE[s], () -> {
-                        String e = game.buyStable(s);
+                        String e = act("buyStable", "s", s);
                         if (e == null) handler.post(() -> showStablePanel(s));
                         return e;
                     })));
@@ -1005,7 +1055,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             if (!game.pvStable[s]) {
                 bs.add(button("☀ PV aufs Dach (" + Game.euro(Defs.PV_ROOF_PRICE) + ")", BTN, x ->
                         confirmBuy("PV-Anlage auf dem " + Defs.S_NAMES[s], Defs.PV_ROOF_PRICE, () -> {
-                            String e = game.buyPvRoof(2 + s);
+                            String e = act("pv", "w", 2 + s);
                             if (e == null) handler.post(() -> showStablePanel(s));
                             return e;
                         })));
@@ -1070,7 +1120,8 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
 
     private String forestText(Forest fo) {
         String s = String.format(Locale.GERMANY, "%.1f ha • ", fo.hectares()) + fo.stateText();
-        if (!fo.owned) s += "\nGehört einem Nachbarn – Preis: " + Game.euro(fo.price());
+        if (!fo.owned && fo.owner >= 0) s += "\nGehört " + game.farms[fo.owner].name;
+        else if (!fo.owned) s += "\nGehört einem Nachbarn – Preis: " + Game.euro(fo.price());
         if (fo.busyBy >= 0) {
             Game.Vehicle v = game.vehicle(fo.busyBy);
             if (v != null) s += "\n👷 " + v.name() + ": " + v.status;
@@ -1089,10 +1140,12 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         map.selectedVehicle = -1;
         openPanel((fo.owned ? "★ " : "") + "🌲 Wald " + fo.number, forestText(fo));
         List<Button> bs = new ArrayList<>();
-        if (!fo.owned) {
+        if (!fo.owned && fo.owner >= 0) {
+            // gehört einem Mitspieler
+        } else if (!fo.owned) {
             bs.add(button("🛒 Kaufen (" + Game.euro(fo.price()) + ")", ORANGE, x ->
                     confirmBuy("Wald " + fo.number, fo.price(), () -> {
-                        String e = game.buyForest(fo);
+                        String e = act("buyForest", "fo", fo.index);
                         if (e == null) handler.post(() -> showForestPanel(fo));
                         return e;
                     })));
@@ -1137,7 +1190,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                     .setPositiveButton("OK", null).show();
             return;
         }
-        String err = game.startForestJob(v, fo, task, species);
+        String err = act("forest", "v", v.id, "fo", fo.index, "t", task, "sp", species);
         if (err != null) toast(err);
         showForestPanel(fo);
     }
@@ -1182,18 +1235,18 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                     if (task == -1) {
                         String[] items = {"🚛 Nur 1 Ladung", "🔁 Fahren bis der Polter leer ist"};
                         new AlertDialog.Builder(this).setTitle("Holz zum Sägewerk").setItems(items, (d2, w2) -> {
-                            String err = game.startWoodJob(v, fo, w2 == 1);
+                            String err = act("wood", "v", v.id, "fo", fo.index, "r", w2 == 1);
                             if (err != null) toast(err);
                             showVehiclePanel(v);
                         }).show();
                     } else if (task == Defs.FT_PLANT && fo.progress <= 0) {
                         chooseSpecies(fo, sp -> {
-                            String err = game.startForestJob(v, fo, task, sp);
+                            String err = act("forest", "v", v.id, "fo", fo.index, "t", task, "sp", sp);
                             if (err != null) toast(err);
                             showVehiclePanel(v);
                         });
                     } else {
-                        String err = game.startForestJob(v, fo, task, fo.taskSpecies >= 0 ? fo.taskSpecies : Defs.SPRUCE);
+                        String err = act("forest", "v", v.id, "fo", fo.index, "t", task, "sp", fo.taskSpecies >= 0 ? fo.taskSpecies : Defs.SPRUCE);
                         if (err != null) toast(err);
                         showVehiclePanel(v);
                     }
@@ -1215,7 +1268,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                         toast(reason);
                         return;
                     }
-                    String err = game.startWoodJob(v, fo, which == 1);
+                    String err = act("wood", "v", v.id, "fo", fo.index, "r", which == 1);
                     if (err != null) toast(err);
                     showForestPanel(fo);
                 }).show();
@@ -1387,7 +1440,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         String head = kind == Defs.K_TOOL ? title + " (Stufe = nötige Traktor-Leistung)" : title;
         showImageList(head, texts, imgs, which -> {
             final Defs.Model m = list.get(which);
-            confirmBuy(m.name, m.price, () -> game.buy(m.id));
+            confirmBuy(m.name, m.price, () -> act("buy", "m", m.id));
         });
     }
 
@@ -1440,7 +1493,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                     } else if (code == -2) {
                         toast("Tippe auf eines deiner Felder und dann auf „☀ Solarpark“.");
                     } else {
-                        confirmBuy("PV-Anlage", Defs.PV_ROOF_PRICE, () -> game.buyPvRoof(code));
+                        confirmBuy("PV-Anlage", Defs.PV_ROOF_PRICE, () -> act("pv", "w", code));
                     }
                 }).show();
     }
@@ -1474,7 +1527,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         new AlertDialog.Builder(this).setTitle("Verkaufen (halber Preis)")
                 .setItems(labels.toArray(new String[0]), (d, which) -> {
                     Object o = things.get(which);
-                    String err = o instanceof Game.Vehicle ? game.sellVehicle((Game.Vehicle) o) : game.sellTool((Game.Tool) o);
+                    String err = o instanceof Game.Vehicle ? act("sellVeh", "v", ((Game.Vehicle) o).id) : act("sellTool", "t", ((Game.Tool) o).id);
                     if (err != null) toast(err);
                     else message("💸 Verkauft.");
                     hidePanel();
@@ -1552,9 +1605,25 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             items.add(t.m().name + " (braucht Stufe " + t.m().level + ")\n" + where);
             imgs.add(thumb(t.m(), null));
         }
+        for (int f = 0; f < game.farmCount(); f++) {
+            if (f == game.currentFarm()) continue;
+            for (Game.Vehicle v : game.farms[f].vehicles) {
+                if (v.lentFrom != game.currentFarm()) continue;
+                things.add(Integer.valueOf(v.id));
+                items.add("🤝 " + v.name() + "\nverliehen an " + game.farms[f].name + " – antippen zum Zurückholen");
+                imgs.add(thumb(v.m(), null));
+            }
+        }
         showImageList("Fuhrpark: " + game.vehicles.size() + " Fahrzeuge, " + game.tools.size() + " Geräte", items, imgs, which -> {
             Object o = things.get(which);
-            if (o instanceof Game.Vehicle) {
+            if (o instanceof Integer) {
+                final int vid = (Integer) o;
+                new AlertDialog.Builder(this).setMessage("Fahrzeug zurückholen? Es hört sofort mit der Arbeit auf.")
+                        .setPositiveButton("Zurückholen", (d, w) -> {
+                            String err = act("ret", "v", vid);
+                            if (err != null) toast(err);
+                        }).setNegativeButton("Abbrechen", null).show();
+            } else if (o instanceof Game.Vehicle) {
                 Game.Vehicle v = (Game.Vehicle) o;
                 map.centerOn(v.x, v.y);
                 showVehiclePanel(v);
@@ -1576,7 +1645,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         new AlertDialog.Builder(this).setTitle("🔧 Gerät").setMessage(msg)
                 .setPositiveButton("OK", null)
                 .setNegativeButton("Verkaufen (" + Game.euro(t.m().price * 0.5) + ")", (d, w) -> {
-                    String err = game.sellTool(t);
+                    String err = act("sellTool", "t", t.id);
                     if (err != null) toast(err);
                     else message("💸 " + t.m().name + " verkauft.");
                 }).show();
@@ -1669,6 +1738,576 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                 showStart();
             }
         }).show();
+    }
+
+
+    // ============================================================ Mehrspieler
+
+    private static final int REQ_PERM = 11, REQ_ENABLE = 12;
+    private static final String PERM_CONNECT = "android.permission.BLUETOOTH_CONNECT";
+    private android.bluetooth.BluetoothAdapter adapter;
+    private Runnable pendingBt;
+    private Net net;
+    /** dieses Handy ist Mitspieler (nicht Gastgeber) */
+    private boolean isClient;
+    private int myPlayer;
+    private final String[] playerNames = new String[3];
+    private int lobbyMode = Game.MODE_SHARED;
+    private boolean lobbyContinue;
+    private LinearLayout lobbyList;
+    private long lastSnap;
+    private boolean snapDirty;
+
+    private boolean multiplayer() {
+        return net != null;
+    }
+
+    private int farmOfPlayer(int p) {
+        if (game == null || game.mode == Game.MODE_SHARED) return 0;
+        return p < game.farmCount() ? p : 0;
+    }
+
+    private String myName() {
+        String n = null;
+        try {
+            if (adapter != null) n = adapter.getName();
+        } catch (SecurityException ignored) {
+        }
+        return n == null || n.isEmpty() ? "Spieler" : n;
+    }
+
+    private void withBluetooth(Runnable r) {
+        if (adapter == null) {
+            android.bluetooth.BluetoothManager bm = (android.bluetooth.BluetoothManager) getSystemService(BLUETOOTH_SERVICE);
+            adapter = bm == null ? null : bm.getAdapter();
+        }
+        if (adapter == null) {
+            toast("Dieses Handy hat kein Bluetooth.");
+            return;
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 31
+                && checkSelfPermission(PERM_CONNECT) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            pendingBt = r;
+            requestPermissions(new String[]{PERM_CONNECT}, REQ_PERM);
+            return;
+        }
+        if (!adapter.isEnabled()) {
+            pendingBt = r;
+            try {
+                startActivityForResult(new android.content.Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE), REQ_ENABLE);
+            } catch (Exception e) {
+                toast("Bitte Bluetooth einschalten.");
+            }
+            return;
+        }
+        r.run();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
+        if (code != REQ_PERM) return;
+        Runnable p = pendingBt;
+        pendingBt = null;
+        if (results.length > 0 && results[0] == android.content.pm.PackageManager.PERMISSION_GRANTED && p != null) withBluetooth(p);
+        else toast("Ohne die Erlaubnis „Geräte in der Nähe“ geht Bluetooth nicht.");
+    }
+
+    @Override
+    protected void onActivityResult(int code, int result, android.content.Intent data) {
+        if (code != REQ_ENABLE) return;
+        Runnable p = pendingBt;
+        pendingBt = null;
+        if (adapter != null && adapter.isEnabled() && p != null) p.run();
+        else toast("Bluetooth ist aus.");
+    }
+
+    private void closeNet() {
+        if (net != null) {
+            net.close();
+            net = null;
+        }
+        isClient = false;
+        myPlayer = 0;
+    }
+
+    private LinearLayout screen(String title) {
+        map = null;
+        ScrollView sv = new ScrollView(this);
+        sv.setBackgroundColor(BG);
+        sv.setFillViewport(true);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(20), dp(40), dp(20), dp(30));
+        sv.addView(root);
+        add(root, text(title, 26, Color.WHITE, true));
+        setContentView(sv);
+        return root;
+    }
+
+    private File mpFile() {
+        return new File(getFilesDir(), "mehrspieler.json");
+    }
+
+    private void showMultiMenu() {
+        closeNet();
+        LinearLayout root = screen("👥 Mehrspieler");
+        add(root, text("Bis zu 3 Handys per Bluetooth. Koppelt die Handys einmal in den Bluetooth-Einstellungen. "
+                + "Einer erstellt das Spiel (Gastgeber), die anderen treten bei.", 15, 0xFFC5D6B8, false));
+        add(root, button("🛰  Spiel erstellen (Gastgeber)", GREEN, v -> withBluetooth(this::showHostSetup)));
+        add(root, button("🔗  Spiel beitreten", BLUE, v -> withBluetooth(this::showJoinPick)));
+        add(root, button("⚙  Bluetooth-Einstellungen", BTN, v -> {
+            try {
+                startActivity(new android.content.Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS));
+            } catch (Exception ignored) {
+            }
+        }));
+        add(root, button("Zurück", BTN, v -> showStart()));
+    }
+
+    private void showHostSetup() {
+        LinearLayout root = screen("🛰 Spiel erstellen");
+        if (mpFile().exists()) {
+            add(root, button("▶  Gespeichertes Mehrspieler-Spiel fortsetzen", ORANGE, v -> {
+                lobbyContinue = true;
+                showLobby();
+            }));
+            add(root, text("…oder neue Welt mit Spielart:", 15, 0xFFC5D6B8, false));
+        } else {
+            add(root, text("Wie wollt ihr spielen?", 15, 0xFFC5D6B8, false));
+        }
+        String[] desc = {"Alle arbeiten zusammen: gemeinsames Geld, gemeinsame Maschinen und Felder.",
+                "Gleiche Karte, aber jeder hat seinen eigenen Hof, eigenes Geld und eigene Felder.",
+                "Eigene Höfe – und ihr könnt euch Maschinen leihen und Ware verkaufen."};
+        String[] icons = {"🤝", "🏠🏠", "🏠🤝🏠"};
+        int[] cols = {GREEN, BLUE, 0xFF6A1B9A};
+        for (int m = 0; m < 3; m++) {
+            final int mode = m;
+            Button b = button(icons[m] + "  " + Game.MODE_NAMES[m] + "\n" + desc[m], cols[m], v -> {
+                lobbyContinue = false;
+                lobbyMode = mode;
+                showLobby();
+            });
+            b.setTextSize(14);
+            add(root, b);
+        }
+        add(root, button("Zurück", BTN, v -> showMultiMenu()));
+    }
+
+    private void showLobby() {
+        closeNet();
+        net = new Net(this, true);
+        net.startHost(adapter);
+        playerNames[0] = myName();
+        playerNames[1] = playerNames[2] = null;
+        LinearLayout root = screen("⏳ Warte auf Mitspieler…");
+        add(root, text((lobbyContinue ? "Gespeichertes Spiel" : Game.MODE_NAMES[lobbyMode])
+                + "\n\nDie anderen tippen jetzt „Mehrspieler → Spiel beitreten“ und wählen dein Handy: „" + playerNames[0] + "“",
+                15, 0xFFC5D6B8, false));
+        lobbyList = new LinearLayout(this);
+        lobbyList.setOrientation(LinearLayout.VERTICAL);
+        add(root, lobbyList);
+        refreshLobby();
+        add(root, button("▶  Spiel starten", GREEN, v -> startHosted()));
+        add(root, button("Abbrechen", RED, v -> showMultiMenu()));
+    }
+
+    private void refreshLobby() {
+        if (lobbyList == null) return;
+        lobbyList.removeAllViews();
+        for (int p = 0; p < 3; p++) {
+            String n = playerNames[p];
+            lobbyList.addView(text((n != null ? "✅ " : "⬜ ") + "Spieler " + (p + 1) + ": " + (n != null ? n : "–")
+                    + (p == 0 ? " (du)" : ""), 17, n != null ? Color.WHITE : 0xFF8FA37F, false));
+        }
+    }
+
+    private void startHosted() {
+        int players = 1;
+        for (int p = 1; p < 3; p++) if (playerNames[p] != null) players = p + 1;
+        if (players < 2) {
+            toast("Es ist noch kein Mitspieler da.");
+            return;
+        }
+        net.stopAccepting();
+        Game g;
+        if (lobbyContinue) {
+            g = loadFrom(mpFile());
+            if (g == null) {
+                toast("Der gespeicherte Spielstand passt nicht mehr – bitte neue Welt.");
+                return;
+            }
+        } else {
+            String[] names = new String[players];
+            for (int p = 0; p < players; p++) names[p] = playerNames[p] != null ? playerNames[p] : "Spieler " + (p + 1);
+            g = Game.newGame(System.nanoTime(), lobbyMode, players, names);
+        }
+        lobbyList = null;
+        isClient = false;
+        myPlayer = 0;
+        g.select(0);
+        startGame(g);
+        for (int p = 1; p < 3; p++) if (playerNames[p] != null) net.send(p, "START " + p);
+        sendSnapshot();
+        message("👥 Mehrspieler: " + Game.MODE_NAMES[game.mode]);
+    }
+
+    private void showJoinPick() {
+        closeNet();
+        LinearLayout root = screen("🔗 Wem beitreten?");
+        java.util.Set<android.bluetooth.BluetoothDevice> devices;
+        try {
+            devices = adapter.getBondedDevices();
+        } catch (SecurityException e) {
+            devices = null;
+        }
+        if (devices == null || devices.isEmpty()) {
+            add(root, text("Keine gekoppelten Geräte gefunden. Koppelt die Handys zuerst in den Bluetooth-Einstellungen.", 16, 0xFFFFB74D, false));
+        } else {
+            add(root, text("Tippe auf das Handy des Gastgebers. Er muss vorher „Spiel erstellen“ getippt haben.", 15, 0xFFC5D6B8, false));
+            for (final android.bluetooth.BluetoothDevice d : devices) {
+                String name;
+                try {
+                    name = d.getName();
+                } catch (SecurityException e) {
+                    name = null;
+                }
+                final String label = name == null ? d.getAddress() : name;
+                add(root, button("📱  " + label, BLUE, v -> {
+                    closeNet();
+                    net = new Net(this, false);
+                    isClient = true;
+                    net.join(d, adapter);
+                    LinearLayout r2 = screen("⏳ Verbinde mit " + label + "…");
+                    add(r2, button("Abbrechen", RED, w -> showMultiMenu()));
+                }));
+            }
+        }
+        add(root, button("Zurück", BTN, v -> showMultiMenu()));
+    }
+
+    // ------------------------------------------------------- Net.Listener
+
+    @Override
+    public void onJoin(int player, String name) {
+        if (net == null) return;
+        if (net.host) {
+            // Name kommt mit HI, bis dahin Gerätename
+            playerNames[player] = name;
+            refreshLobby();
+            if (game != null && map != null) {
+                // ins laufende Spiel (z. B. nach Verbindungsabbruch)
+                net.send(player, "START " + player);
+                sendSnapshot();
+                message("👋 " + name + " ist wieder dabei.");
+            }
+        } else {
+            net.send(0, "HI " + myName());
+            LinearLayout root = screen("✅ Verbunden mit " + name);
+            add(root, text("Warte, bis der Gastgeber das Spiel startet…", 16, 0xFFC5D6B8, false));
+            add(root, button("Abbrechen", RED, v -> showMultiMenu()));
+        }
+    }
+
+    @Override
+    public void onLine(int player, String line) {
+        if (net == null) return;
+        try {
+            if (net.host) {
+                if (line.startsWith("HI ")) {
+                    playerNames[player] = line.substring(3).trim();
+                    refreshLobby();
+                } else if (line.startsWith("C ") && game != null) {
+                    String err = exec(player, new JSONObject(line.substring(2)));
+                    if (err != null) net.send(player, "E " + err);
+                    snapDirty = true;
+                }
+            } else {
+                if (line.startsWith("START ")) {
+                    myPlayer = Integer.parseInt(line.substring(6).trim());
+                } else if (line.startsWith("S ")) {
+                    JSONObject o = new JSONObject(line.substring(2));
+                    JSONObject st = o.getJSONObject("g");
+                    boolean first = game == null || map == null;
+                    if (first) {
+                        Game g = Game.fromJson(st);
+                        g.muted = true;
+                        g.select(farmOfPlayerFor(g, myPlayer));
+                        startGame(g);
+                        message("👥 Mehrspieler: " + Game.MODE_NAMES[g.mode]);
+                    } else {
+                        game.applyState(st);
+                    }
+                    paused = o.optBoolean("pz", false);
+                } else if (line.startsWith("M ")) {
+                    message(line.substring(2));
+                } else if (line.startsWith("E ")) {
+                    toast(line.substring(2));
+                } else if (line.startsWith("O ")) {
+                    showOffer(new JSONObject(line.substring(2)));
+                }
+            }
+        } catch (Exception e) {
+            // kaputte Zeile ignorieren
+        }
+    }
+
+    private static int farmOfPlayerFor(Game g, int p) {
+        if (g.mode == Game.MODE_SHARED) return 0;
+        return p < g.farmCount() ? p : 0;
+    }
+
+    @Override
+    public void onLeft(int player, String reason) {
+        if (net == null) return;
+        if (net.host) {
+            String n = player >= 0 ? playerNames[player] : null;
+            if (game != null && map != null) {
+                if (n != null) message("👋 " + n + " hat das Spiel verlassen. (Kann wieder beitreten.)");
+                if (player > 0) playerNames[player] = null;
+                // wieder Beitritte annehmen
+                net.startHost(adapter);
+            } else {
+                if (player > 0) playerNames[player] = null;
+                refreshLobby();
+                if (player < 0) toast(reason);
+            }
+        } else {
+            boolean inGame = game != null && map != null;
+            closeNet();
+            game = null;
+            running = false;
+            showStart();
+            new AlertDialog.Builder(this).setTitle("Verbindung weg")
+                    .setMessage(inGame ? "Die Verbindung zum Gastgeber ist abgebrochen." : reason)
+                    .setPositiveButton("OK", null).show();
+        }
+    }
+
+    private void sendSnapshot() {
+        if (net == null || !net.host || game == null) return;
+        try {
+            JSONObject o = new JSONObject();
+            o.put("g", game.toJson());
+            o.put("pz", paused);
+            net.broadcast("S " + o);
+        } catch (Exception ignored) {
+        }
+        lastSnap = SystemClock.uptimeMillis();
+        snapDirty = false;
+    }
+
+    /** Nachrichten der Höfe verteilen */
+    private void drainMessages() {
+        if (game == null) return;
+        int mine = game.currentFarm();
+        for (int f = 0; f < game.farmCount(); f++) {
+            List<String> box = game.farms[f].outbox;
+            if (box.isEmpty()) continue;
+            for (String m : box) {
+                if (f == mine) message(m);
+                if (net != null && net.host) {
+                    for (int p = 1; p < 3; p++) if (playerNames[p] != null && farmOfPlayer(p) == f) net.send(p, "M " + m);
+                }
+            }
+            box.clear();
+        }
+    }
+
+    // ------------------------------------------------------------- Befehle
+
+    /** Aktion ausführen: allein oder als Gastgeber sofort, als Mitspieler an den Gastgeber schicken */
+    private String act(String op, Object... kv) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("op", op);
+            for (int i = 0; i + 1 < kv.length; i += 2) o.put((String) kv[i], kv[i + 1]);
+            if (isClient) {
+                if (net != null) net.send(0, "C " + o);
+                return null;
+            }
+            String err = exec(0, o);
+            snapDirty = true;
+            return err;
+        } catch (Exception e) {
+            return "Fehler: " + e.getMessage();
+        }
+    }
+
+    private String exec(int player, JSONObject o) throws org.json.JSONException {
+        int back = game.currentFarm();
+        int farm = farmOfPlayer(player);
+        game.select(farm);
+        try {
+            String op = o.getString("op");
+            Game.Vehicle v = o.has("v") ? game.vehicle(o.getInt("v")) : null;
+            if (o.has("v") && v == null && !op.equals("ret")) return "Das Fahrzeug gibt es nicht (mehr).";
+            Field f = o.has("f") ? game.world.fields.get(o.getInt("f")) : null;
+            Forest fo = o.has("fo") ? game.world.forests.get(o.getInt("fo")) : null;
+            switch (op) {
+                case "goto":
+                    return game.startGoto(v, o.getInt("x"), o.getInt("y"));
+                case "wind":
+                    return game.buildWind(o.getInt("x"), o.getInt("y"));
+                case "home":
+                    game.sendHome(v);
+                    return null;
+                case "stop":
+                    game.stop(v);
+                    return null;
+                case "buyField":
+                    return game.buyField(f);
+                case "solar":
+                    return game.buildSolarPark(f);
+                case "field":
+                    return game.startFieldJob(v, f, o.getInt("t"), o.getInt("c"));
+                case "sell":
+                    return game.startSellJob(v, o.getInt("p"), o.getInt("b"), o.getBoolean("r"));
+                case "feed":
+                    return game.startFeedJob(v, o.getInt("s"), o.getInt("p"), o.getBoolean("r"));
+                case "buyStable":
+                    return game.buyStable(o.getInt("s"));
+                case "pv":
+                    return game.buyPvRoof(o.getInt("w"));
+                case "buyForest":
+                    return game.buyForest(fo);
+                case "forest":
+                    return game.startForestJob(v, fo, o.getInt("t"), o.getInt("sp"));
+                case "wood":
+                    return game.startWoodJob(v, fo, o.getBoolean("r"));
+                case "buy":
+                    return game.buy(o.getInt("m"));
+                case "sellVeh":
+                    return game.sellVehicle(v);
+                case "sellTool": {
+                    Game.Tool t = game.tool(o.getInt("t"));
+                    return t == null ? "Das Gerät gibt es nicht (mehr)." : game.sellTool(t);
+                }
+                case "speed":
+                    game.speedIdx = o.getInt("i");
+                    paused = false;
+                    return null;
+                case "pause":
+                    paused = o.getBoolean("b");
+                    return null;
+                case "lend":
+                    return game.lendVehicle(v, o.getInt("to"));
+                case "ret":
+                    return game.returnVehicle(o.getInt("v"));
+                case "offer": {
+                    int to = o.getInt("to"), p = o.getInt("p");
+                    double t = o.getDouble("t"), pr = o.getDouble("pr");
+                    if (game.storage[p] + 1e-6 < t) return "So viel " + Defs.PRODUCT_NAMES[p] + " hast du nicht.";
+                    JSONObject offer = new JSONObject();
+                    offer.put("from", farm);
+                    offer.put("p", p);
+                    offer.put("t", t);
+                    offer.put("pr", pr);
+                    int target = -1;
+                    for (int q = 0; q < 3; q++) if (farmOfPlayer(q) == to && (q == 0 || playerNames[q] != null)) target = q;
+                    if (target < 0) return "Der Mitspieler ist gerade nicht verbunden.";
+                    if (target == 0) handler.post(() -> showOffer(offer));
+                    else net.send(target, "O " + offer);
+                    game.farms[farm].outbox.add("📨 Angebot an " + game.farms[to].name + " geschickt – warte auf Antwort.");
+                    return null;
+                }
+                case "accept":
+                    return game.tradeGoods(o.getInt("from"), farm, o.getInt("p"), o.getDouble("t"), o.getDouble("pr"));
+                case "decline": {
+                    int from = o.getInt("from");
+                    game.farms[from].outbox.add("❌ " + game.farms[farm].name + " hat dein Angebot abgelehnt.");
+                    return null;
+                }
+                default:
+                    return "Unbekannter Befehl.";
+            }
+        } finally {
+            game.select(back);
+        }
+    }
+
+    // ------------------------------------------------- Helfen: Handel & Leihen
+
+    private void showOffer(final JSONObject o) {
+        if (game == null) return;
+        try {
+            final int from = o.getInt("from"), p = o.getInt("p");
+            final double t = o.getDouble("t"), pr = o.getDouble("pr");
+            String msg = String.format(Locale.GERMANY, "%s bietet dir %.1f t %s an – für %s pro t (zusammen %s).\n\nAnnehmen?",
+                    game.farms[from].name, t, Defs.PRODUCT_NAMES[p], Game.euro(pr), Game.euro(t * pr));
+            new AlertDialog.Builder(this).setTitle("🤝 Angebot").setMessage(msg)
+                    .setPositiveButton("Annehmen", (d, w) -> {
+                        String err = act("accept", "from", from, "p", p, "t", t, "pr", pr);
+                        if (err != null) toast(err);
+                    })
+                    .setNegativeButton("Ablehnen", (d, w) -> act("decline", "from", from))
+                    .setCancelable(false).show();
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void askTrade(final int product, final int toFarm) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(8), dp(20), 0);
+        final android.widget.EditText tons = new android.widget.EditText(this), price = new android.widget.EditText(this);
+        tons.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        price.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        tons.setText(String.format(Locale.US, "%.0f", Math.floor(Math.min(game.storage[product], 20))));
+        price.setText(String.format(Locale.US, "%.0f", game.bestPrice(product)));
+        box.addView(text(String.format(Locale.GERMANY, "Wie viel Tonnen? (du hast %.1f t)", game.storage[product]), 14, 0xFF333333, false));
+        box.addView(tons);
+        box.addView(text("Preis pro Tonne in € (Händler zahlt gerade bis " + Game.euro(game.bestPrice(product)) + ")", 14, 0xFF333333, false));
+        box.addView(price);
+        new AlertDialog.Builder(this).setTitle(Defs.PRODUCT_NAMES[product] + " an " + game.farms[toFarm].name)
+                .setView(box)
+                .setPositiveButton("Angebot schicken", (d, w) -> {
+                    double t, pr;
+                    try {
+                        t = Double.parseDouble(tons.getText().toString().replace(',', '.'));
+                        pr = Double.parseDouble(price.getText().toString().replace(',', '.'));
+                    } catch (Exception e) {
+                        toast("Bitte Zahlen eingeben.");
+                        return;
+                    }
+                    if (t <= 0 || pr < 0) {
+                        toast("Bitte eine Menge über 0 eingeben.");
+                        return;
+                    }
+                    String err = act("offer", "to", toFarm, "p", product, "t", t, "pr", pr);
+                    if (err != null) toast(err);
+                })
+                .setNegativeButton("Abbrechen", null).show();
+    }
+
+    private boolean helping() {
+        return game != null && game.mode == Game.MODE_HELP && game.farmCount() > 1;
+    }
+
+    private void chooseLend(final Game.Vehicle v) {
+        final List<Integer> fs = new ArrayList<>();
+        List<String> labels = new ArrayList<>();
+        for (int f = 0; f < game.farmCount(); f++) {
+            if (f == game.currentFarm()) continue;
+            fs.add(f);
+            labels.add("🤝 an " + game.farms[f].name);
+        }
+        new AlertDialog.Builder(this).setTitle(v.name() + " verleihen")
+                .setItems(labels.toArray(new String[0]), (d, which) -> {
+                    String err = act("lend", "v", v.id, "to", fs.get(which));
+                    if (err != null) toast(err);
+                    hidePanel();
+                }).show();
+    }
+
+    private void showOtherHof(int f) {
+        Game.Farm fm = game.farms[f];
+        int fields = 0;
+        for (Field x : game.world.fields) if (x.owner == f) fields++;
+        String msg = String.format(Locale.GERMANY, "%d Fahrzeuge, %d Geräte, %d Felder", fm.vehicles.size(), fm.tools.size(), fields);
+        int lent = 0;
+        for (Game.Vehicle v : fm.vehicles) if (v.lentFrom == game.currentFarm()) lent++;
+        if (lent > 0) msg += "\nVon dir geliehen: " + lent + " Fahrzeug(e)";
+        new AlertDialog.Builder(this).setTitle("🏠 Hof von " + fm.name).setMessage(msg).setPositiveButton("OK", null).show();
     }
 
     // ---------------------------------------------------------------- Helfer
