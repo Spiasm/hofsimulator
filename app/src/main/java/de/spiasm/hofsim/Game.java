@@ -28,7 +28,8 @@ public class Game {
     }
 
     public static final int GOTO = 0, PICKUP = 1, DROP = 2, WORK = 3, UNLOAD = 4, LOAD = 5, SELL = 6, REPEAT_SELL = 7,
-            WAIT_OVERLOAD = 8, OVERLOAD = 9, LOAD_FEED = 10, DELIVER = 11, REPEAT_FEED = 12;
+            WAIT_OVERLOAD = 8, OVERLOAD = 9, LOAD_FEED = 10, DELIVER = 11, REPEAT_FEED = 12, FOLLOW = 13, LOAD_MANURE = 14,
+            FWORK = 15, POLTER = 16, LOAD_POLTER = 17, REPEAT_WOOD = 18;
 
     public static class Step {
         public int kind, a, b, c;
@@ -48,6 +49,8 @@ public class Game {
         public double load;
         public int loadProduct = -1;
         public double timer;
+        /** Erntemaschine: welcher Traktor gerade zum Überladen kommt */
+        public int overloader = -1;
         public final List<Step> steps = new ArrayList<>();
         public List<float[]> path;
         public int pathIdx;
@@ -73,9 +76,13 @@ public class Game {
             return m().kind == Defs.K_HARVESTER;
         }
 
+        public boolean isForestry() {
+            return m().kind == Defs.K_FORESTRY;
+        }
+
         /** arbeitet gerade auf dem Feld? */
         public boolean working() {
-            return !steps.isEmpty() && steps.get(0).kind == WORK;
+            return !steps.isEmpty() && (steps.get(0).kind == WORK || steps.get(0).kind == FWORK);
         }
     }
 
@@ -105,10 +112,17 @@ public class Game {
     public double money;
     public double time;
     public int speedIdx = 3;
-    public final double[] storage = new double[4];
-    public final double[][] priceFactor = new double[3][4];
+    public final double[] storage = new double[Defs.PRODUCTS];
+    public final double[][] priceFactor = new double[Defs.BUYERS][Defs.PRODUCTS];
     public final boolean[] stables = new boolean[Defs.STABLES];
     public final double[][] stableFeed = new double[Defs.STABLES][4];
+    /** Gülle (m³) bzw. Mist (t) je Stall */
+    public final double[] stableManure = new double[Defs.STABLES];
+    /** Schnee-Bedeckung 0..1 */
+    public double snowCover;
+    /** Energie: heute bisher verdient */
+    public double energyToday;
+    private final int[] lastManureWarn = new int[Defs.STABLES];
     public boolean pvHouse, pvHall;
     public final boolean[] pvStable = new boolean[Defs.STABLES];
     public final List<int[]> winds = new ArrayList<>();
@@ -133,6 +147,8 @@ public class Game {
     public int trafficTarget = 12;
     public int fireField = -1;
     public float fireX, fireY, fireR;
+    /** Stärke der Flammen 0..1 (sinkt beim Löschen) */
+    public float firePower = 1;
     public FireTruck fireTruck;
 
     public static final int START_DAY = 60; // 1. März
@@ -160,6 +176,16 @@ public class Game {
                 f.crop = r.nextInt(4);
                 f.growth = r.nextDouble() * 1.05;
                 f.fertilized = r.nextBoolean();
+            }
+        }
+        for (Forest fo : g.world.forests) {
+            int k = r.nextInt(6);
+            fo.species = r.nextInt(3);
+            if (k == 0) {
+                fo.state = Forest.CLEAR;
+            } else {
+                fo.state = Forest.GROWING;
+                fo.growth = 0.3 + r.nextDouble() * 0.9;
             }
         }
         Field start = g.fieldByNumber(1);
@@ -241,7 +267,7 @@ public class Game {
     }
 
     public String weatherText() {
-        String w = weatherType == 0 ? "☀" : weatherType == 1 ? "⛅" : "🌧";
+        String w = weatherType == 0 ? (daylight() > 0 ? "☀" : "🌙") : weatherType == 1 ? "⛅" : weatherType == 2 ? "🌧" : "❄";
         return w + (weatherWind > 1.0 ? " 💨" : "");
     }
 
@@ -258,7 +284,7 @@ public class Game {
     /** bester Händler für ein Produkt */
     public int bestBuyer(int product) {
         int best = -1;
-        for (int b = 0; b < 3; b++) if (buys(b, product) && (best < 0 || price(b, product) > price(best, product))) best = b;
+        for (int b = 0; b < Defs.BUYERS; b++) if (buys(b, product) && (best < 0 || price(b, product) > price(best, product))) best = b;
         return best;
     }
 
@@ -325,6 +351,15 @@ public class Game {
                 if (f.growth < max) f.growth = Math.min(max, f.growth + dt / (Defs.GROW_DAYS[f.crop] * 86400));
             }
         }
+        for (Forest fo : world.forests) {
+            if (fo.state == Forest.GROWING) {
+                double max = fo.owned ? 1.0 : 1.25;
+                if (fo.growth < max) fo.growth = Math.min(max, fo.growth + dt / (Defs.TREE_DAYS[fo.species] * 86400));
+            }
+        }
+        double e = energyRateNow() * dt / 86400.0;
+        energyToday += e;
+        money += e;
         for (Vehicle v : new ArrayList<>(vehicles)) {
             if (v.busy()) {
                 money -= (Defs.HELPER_WAGE + v.m().diesel) * dt / 3600.0;
@@ -352,15 +387,45 @@ public class Game {
             weatherType = 0;
             mult = 1.0;
         }
+        boolean winter = month == 11 || month <= 1;
+        if (weatherType == 2 && winter) weatherType = 3; // Schnee statt Regen
         weatherSun = Defs.SUN_SEASON[month] * mult;
-        weatherWind = 0.25 + rnd.nextDouble() * 1.0 + (weatherType == 2 ? 0.3 : 0);
+        weatherWind = 0.25 + rnd.nextDouble() * 1.0 + (weatherType >= 2 ? 0.3 : 0);
+        if (weatherType == 3) snowCover = Math.min(1, snowCover + 0.5);
+        else snowCover = Math.max(0, snowCover - (winter && weatherType != 0 ? 0.15 : 0.5));
+    }
+
+    /** Sonnenstand: 0 nachts, 1 mittags */
+    public double daylight() {
+        double hour = (time % 86400) / 3600.0;
+        if (hour < 6 || hour > 20) return 0;
+        return Math.max(0, Math.sin(Math.PI * (hour - 6) / 14));
+    }
+
+    /** aktuelle PV-Leistung 0..1 */
+    public double pvNow() {
+        return Math.max(0, Math.min(1, weatherSun * daylight() * (1 - 0.85 * snowCover)));
+    }
+
+    /** aktuelle Windrad-Leistung 0..1 */
+    public double windNow() {
+        double w = weatherWind / 1.3 * (0.85 + 0.15 * Math.sin(time / 900.0));
+        if (w < 0.12) return 0;
+        return Math.min(1, w);
+    }
+
+    /** Energie-Einnahmen pro Tag bei der aktuellen Leistung */
+    public double energyRateNow() {
+        double pv = pvNow() / 0.42; // Tagesmittel der Sonnenkurve ausgleichen
+        return pvRoofs() * Defs.PV_ROOF_INCOME * pv + pvFieldHa() * Defs.PV_FIELD_INCOME_HA * pv
+                + winds.size() * Defs.WIND_INCOME * windNow();
     }
 
     private void daily() {
         newWeather();
         // Preise schwanken
-        for (int b = 0; b < 3; b++) {
-            for (int p = 0; p < 4; p++) {
+        for (int b = 0; b < Defs.BUYERS; b++) {
+            for (int p = 0; p < Defs.PRODUCTS; p++) {
                 double v = Defs.BUY_VOLATILITY[b];
                 priceFactor[b][p] = Math.max(1 - 8 * v, Math.min(1 + 8 * v, priceFactor[b][p] + rnd.nextGaussian() * v));
             }
@@ -374,8 +439,8 @@ public class Game {
         } else if (bonusProduct < 0 && rnd.nextInt(10) == 0) {
             int b, p;
             do {
-                b = rnd.nextInt(3);
-                p = rnd.nextInt(4);
+                b = rnd.nextInt(Defs.BUYERS);
+                p = rnd.nextInt(Defs.PRODUCTS);
             } while (!buys(b, p));
             bonusBuyer = b;
             bonusProduct = p;
@@ -396,6 +461,17 @@ public class Game {
             f = Math.max(0, f);
             for (int p = 0; p < 4; p++) stableFeed[s][p] = Math.max(0, stableFeed[s][p] - Defs.S_FEED[s][p] * f);
             money += Defs.S_INCOME[s] * f - Defs.S_COST[s];
+            // Gülle / Mist
+            double prod = (Defs.S_SLURRY[s] + Defs.S_DUNG[s]) * f;
+            double cap = manureCap(s);
+            if (cap > 0) {
+                stableManure[s] = Math.min(cap, stableManure[s] + prod);
+                if (stableManure[s] >= cap * 0.9 && day() - lastManureWarn[s] >= 3) {
+                    lastManureWarn[s] = day();
+                    msg(Defs.S_ICON[s] + " " + (Defs.S_SLURRY[s] > 0 ? "Die Güllegrube" : "Der Misthaufen") + " am "
+                            + Defs.S_NAMES[s] + " ist fast voll – bitte auf die Felder ausbringen!");
+                }
+            }
             double left = stableDays(s);
             if (f < 0.999 && day() - lastFeedWarn[s] >= 2) {
                 lastFeedWarn[s] = day();
@@ -405,12 +481,21 @@ public class Game {
                 msg(String.format(Locale.GERMANY, "%s %s: Futter reicht nur noch %.0f Tage!", Defs.S_ICON[s], Defs.S_NAMES[s], left));
             }
         }
-        // Energie
-        double energy = pvRoofs() * Defs.PV_ROOF_INCOME * weatherSun
-                + pvFieldHa() * Defs.PV_FIELD_INCOME_HA * weatherSun
-                + winds.size() * Defs.WIND_INCOME * Math.min(1.3, weatherWind);
-        lastEnergy = energy;
-        money += energy;
+        // Energie (wird laufend verdient, hier nur Tageswert merken)
+        lastEnergy = energyToday;
+        energyToday = 0;
+        // fremde Wälder
+        for (Forest fo : world.forests) {
+            if (fo.owned) continue;
+            if (fo.state == Forest.GROWING && fo.growth >= 1.2) {
+                fo.state = Forest.CLEAR;
+                fo.growth = 0;
+            } else if (fo.state == Forest.CLEAR && rnd.nextInt(6) == 0) {
+                fo.state = Forest.GROWING;
+                fo.species = rnd.nextInt(3);
+                fo.growth = 0;
+            }
+        }
         // fremde Felder bewirtschaften sich selbst
         for (Field f : world.fields) {
             if (f.owned || f.pv) continue;
@@ -505,21 +590,33 @@ public class Game {
         int[] g = world.fireGate != null ? world.fireGate : world.hofGate;
         fireTruck.x = (g[0] + 0.5f) * Defs.TILE;
         fireTruck.y = (g[1] + 0.5f) * Defs.TILE;
-        int tx = (int) (fireX / Defs.TILE), ty = (int) (fireY / Defs.TILE);
-        fireTruck.path = world.path(g[0], g[1], tx, ty);
-        // nicht ganz ins Feuer fahren: kurz davor stehen bleiben
-        while (fireTruck.path.size() > 3) {
-            float[] last = fireTruck.path.get(fireTruck.path.size() - 1);
-            if (Math.hypot(last[0] - fireX, last[1] - fireY) > 30) break;
-            fireTruck.path.remove(fireTruck.path.size() - 1);
+        // Standplatz: Straße (oder Wiese) direkt am Feldrand, möglichst nah am Feuer
+        int[] stand = null;
+        double bestD = Double.MAX_VALUE;
+        for (int pass = 0; pass < 2 && stand == null; pass++) {
+            for (int x = f.x - 3; x < f.x + f.w + 3; x++) {
+                for (int y = f.y - 3; y < f.y + f.h + 3; y++) {
+                    if (!world.in(x, y)) continue;
+                    int tt = world.tile[x][y];
+                    if (pass == 0 ? tt != World.ROAD : tt != World.GRASS) continue;
+                    double d = Math.hypot((x + 0.5) * Defs.TILE - fireX, (y + 0.5) * Defs.TILE - fireY);
+                    if (d < bestD) {
+                        bestD = d;
+                        stand = new int[]{x, y};
+                    }
+                }
+            }
         }
+        if (stand == null) stand = new int[]{f.x, f.y};
+        fireTruck.path = world.path(g[0], g[1], stand[0], stand[1]);
         fireTruck.pathIdx = 0;
+        firePower = 1;
     }
 
     private void updateFire(double dt) {
         if (fireField >= 0) {
             Field f = world.fields.get(fireField);
-            fireR += (float) (0.5 * dt);
+            if (fireTruck == null || fireTruck.state != 1) fireR += (float) (0.5 * dt);
             float diag = (float) Math.hypot(f.w * Defs.TILE, f.h * Defs.TILE);
             if (fireR > diag * 1.1f) endFire("🔥 Feld " + f.number + " ist komplett abgebrannt.");
         }
@@ -565,6 +662,7 @@ public class Game {
         } else if (t.state == 1) {
             t.heading = (float) Math.toDegrees(Math.atan2(fireY - t.y, fireX - t.x));
             t.timer += dt;
+            firePower = (float) Math.max(0, 1 - t.timer / 150);
             if (fireField < 0) {
                 sendTruckHome();
             } else if (t.timer > 150) {
@@ -635,6 +733,10 @@ public class Game {
                     break;
                 }
                 case DROP: {
+                    if (v.loadProduct <= -2) {
+                        v.load = 0;
+                        v.loadProduct = -1;
+                    }
                     Tool t = tool(v.tool);
                     if (t != null) t.attachedTo = -1;
                     v.tool = -1;
@@ -701,7 +803,7 @@ public class Game {
                     double space = stableCap(s.b, s.a) - stableFeed[s.b][s.a];
                     double amount = Math.min(Math.min(storage[s.a], tr != null ? tr.m().cap : 0), space);
                     v.steps.remove(0);
-                    if (amount < 0.1) {
+                    if (amount < 0.005) {
                         // nichts mehr zu tun: Fahrt zum Stall und Abladen überspringen
                         if (!v.steps.isEmpty() && v.steps.get(0).kind == GOTO) v.steps.remove(0);
                         if (!v.steps.isEmpty() && v.steps.get(0).kind == DELIVER) v.steps.remove(0);
@@ -731,7 +833,7 @@ public class Game {
                 case REPEAT_FEED: {
                     v.steps.remove(0);
                     double space = stableCap(s.b, s.a) - stableFeed[s.b][s.a];
-                    if (storage[s.a] >= 0.5 && space >= 0.5) {
+                    if (storage[s.a] >= 0.5 && space >= 0.01) {
                         int[] park = world.parking(v.parkSlot);
                         int[] gate = world.stableGate[s.b];
                         v.steps.add(0, new Step(REPEAT_FEED, s.a, s.b, 0));
@@ -741,52 +843,139 @@ public class Game {
                         v.steps.add(0, new Step(GOTO, gate[0], gate[1], 5));
                         v.steps.add(0, new Step(LOAD_FEED, s.a, s.b, 0));
                     } else {
-                        msg("✅ " + v.name() + ": " + Defs.S_NAMES[s.b] + (space < 0.5 ? " ist voll." : " – kein Futter mehr im Hoflager."));
+                        msg("✅ " + v.name() + ": " + Defs.S_NAMES[s.b] + (space < 0.01 ? " ist randvoll (" + Math.round(Defs.S_STORE_DAYS) + " Tage)." : " – kein Futter mehr im Hoflager."));
                     }
                     break;
                 }
                 case WAIT_OVERLOAD: {
-                    Vehicle h = vehicle(s.a);
-                    boolean coming = false;
-                    if (h != null) for (Step hs : h.steps) if (hs.kind == OVERLOAD && hs.a == v.id) coming = true;
-                    if (!coming) {
+                    if (!helperComing(v)) {
                         v.steps.remove(0);
                         if (!v.steps.isEmpty() && v.steps.get(0).kind == WORK) {
                             insertUnloadTrip(v, world.fields.get(v.steps.get(0).a));
+                            msg("⚠ " + v.name() + ": Überladewagen kommt nicht – fährt selbst zum Abladen (teurer Stillstand!).");
                         }
                         break;
                     }
-                    v.status = "wartet auf Überladewagen";
+                    if (v.load < capOf(v) * 0.9) {
+                        v.steps.remove(0);
+                        break;
+                    }
+                    v.status = "Bunker voll – wartet auf Überladewagen (Stillstand kostet!)";
                     dt = 0;
+                    break;
+                }
+                case FOLLOW: {
+                    Vehicle h = vehicle(s.a);
+                    if (h == null || (!h.busy() && h.load < 0.05)) {
+                        v.steps.remove(0);
+                        if (!v.steps.isEmpty() && v.steps.get(0).kind == OVERLOAD) v.steps.remove(0);
+                        v.path = null;
+                        break;
+                    }
+                    double dist = Math.hypot(h.x - v.x, h.y - v.y);
+                    if (dist < 14) {
+                        v.path = null;
+                        v.steps.remove(0);
+                        break;
+                    }
+                    v.timer += dt;
+                    if (v.path == null || v.pathIdx >= v.path.size() || v.timer > 20) {
+                        v.path = world.path((int) (v.x / Defs.TILE), (int) (v.y / Defs.TILE),
+                                (int) (h.x / Defs.TILE), (int) (h.y / Defs.TILE));
+                        v.pathIdx = 0;
+                        v.timer = 0;
+                    }
+                    v.status = "fährt zum Überladen zu " + h.name();
+                    double before = dt;
+                    dt = drive(v, dt);
+                    if (dt >= before - 1e-9) dt = 0; // nicht hängen bleiben
                     break;
                 }
                 case OVERLOAD: {
                     Vehicle h = vehicle(s.a);
-                    v.steps.remove(0);
-                    if (h == null) break;
-                    v.steps.add(0, s); // weiter überladen
-                    // neben den Drescher stellen
-                    double rad = Math.toRadians(h.heading);
-                    v.x = h.x - (float) Math.sin(rad) * -6f;
-                    v.y = h.y + (float) Math.cos(rad) * -6f;
-                    v.heading = h.heading;
-                    v.status = "überlädt von " + h.name();
-                    v.timer += dt;
-                    dt = 0;
-                    if (v.timer >= 120) {
-                        v.timer = 0;
-                        double amount = Math.min(h.load, capOf(v) - v.load);
-                        if (amount > 0) {
-                            v.load += amount;
-                            v.loadProduct = h.loadProduct;
-                            h.load -= amount;
-                            if (h.load < 0.01) h.load = 0;
-                            msg(String.format(Locale.GERMANY, "🚜 %.1f t von %s auf %s übergeladen.", amount, h.name(), v.name()));
-                        }
+                    if (h == null) {
                         v.steps.remove(0);
-                        if (!h.steps.isEmpty() && h.steps.get(0).kind == WAIT_OVERLOAD && h.steps.get(0).a == v.id) {
-                            h.steps.remove(0);
-                        }
+                        break;
+                    }
+                    // neben der Erntemaschine mitfahren (links)
+                    double rad = Math.toRadians(h.heading);
+                    float side = h.m().wid / 2 + 3.5f;
+                    v.x = h.x + (float) Math.sin(rad) * side;
+                    v.y = h.y - (float) Math.cos(rad) * side;
+                    v.heading = h.heading;
+                    double room = capOf(v) - v.load;
+                    double amount = Math.min(Math.min(h.load, room), 0.2 * dt);
+                    if (amount > 0) {
+                        if (v.load < 0.01) v.loadProduct = h.loadProduct;
+                        v.load += amount;
+                        h.load -= amount;
+                        if (h.load < 1e-6) h.load = 0;
+                    }
+                    v.status = "überlädt während der Fahrt";
+                    boolean hWorking = !h.steps.isEmpty() && (h.steps.get(0).kind == WORK || h.steps.get(0).kind == WAIT_OVERLOAD);
+                    boolean full = v.load >= capOf(v) - 0.01;
+                    if (full || (!hWorking && h.load < 0.05)) {
+                        v.steps.remove(0);
+                        if (h.overloader == v.id) h.overloader = -1;
+                        if (!h.steps.isEmpty() && h.steps.get(0).kind == WAIT_OVERLOAD) h.steps.remove(0);
+                        msg(String.format(Locale.GERMANY, "🚜 %s hat %.1f t übernommen und fährt zum Hof.", v.name(), v.load));
+                    }
+                    dt = 0;
+                    break;
+                }
+                case LOAD_MANURE: {
+                    int st = s.b;
+                    double amount = Math.min(capOf(v) - v.load, stableManure[st]);
+                    v.steps.remove(0);
+                    if (amount < 0.05) break;
+                    stableManure[st] -= amount;
+                    v.load += amount;
+                    v.loadProduct = s.a == Defs.FERT_SLURRY ? -2 : -3;
+                    v.status = (s.a == Defs.FERT_SLURRY ? "pumpt Gülle" : "lädt Mist") + " am " + Defs.S_NAMES[st];
+                    break;
+                }
+                case FWORK:
+                    dt = forestWork(v, s, dt);
+                    break;
+                case POLTER: {
+                    Forest fo = world.forests.get(s.a);
+                    if (v.load > 0 && v.loadProduct >= Defs.WOOD) {
+                        fo.polter += v.load;
+                        fo.woodSpecies = v.loadProduct - Defs.WOOD;
+                    }
+                    v.load = 0;
+                    v.loadProduct = -1;
+                    v.steps.remove(0);
+                    break;
+                }
+                case LOAD_POLTER: {
+                    Forest fo = world.forests.get(s.a);
+                    double amount = Math.min(capOf(v), fo.polter);
+                    v.steps.remove(0);
+                    if (amount < 0.1) {
+                        abort(v, "⚠ Am Polter von Wald " + fo.number + " liegt kein Holz.");
+                        sendHomeSilently(v);
+                        return;
+                    }
+                    fo.polter -= amount;
+                    v.load = amount;
+                    v.loadProduct = Defs.WOOD + fo.woodSpecies;
+                    break;
+                }
+                case REPEAT_WOOD: {
+                    v.steps.remove(0);
+                    Forest fo = world.forests.get(s.a);
+                    if (fo.polter >= 0.5) {
+                        int[] park = world.parking(v.parkSlot);
+                        int[] saw = world.traderGate[Defs.B_SAWMILL];
+                        v.steps.add(0, new Step(REPEAT_WOOD, s.a, 0, 0));
+                        v.steps.add(0, new Step(GOTO, park[0], park[1], 1));
+                        v.steps.add(0, new Step(SELL, Defs.B_SAWMILL, 0, 0));
+                        v.steps.add(0, new Step(GOTO, saw[0], saw[1], 3));
+                        v.steps.add(0, new Step(LOAD_POLTER, s.a, 0, 0));
+                        v.steps.add(0, new Step(GOTO, fo.gate[0], fo.gate[1], 7));
+                    } else {
+                        msg("✅ " + v.name() + ": Polter von Wald " + fo.number + " ist leer – alles verkauft.");
                     }
                     break;
                 }
@@ -812,6 +1001,10 @@ public class Game {
                 return "fährt zum Überladen";
             case 5:
                 return "bringt Futter zum Stall";
+            case 6:
+                return "holt Gülle/Mist am Stall";
+            case 7:
+                return "fährt zum Wald";
             default:
                 return "fährt";
         }
@@ -870,6 +1063,7 @@ public class Game {
         }
         double dp = rate * dt / 3600.0 / area;
         boolean harvest = s.b == Defs.TASK_HARVEST;
+        boolean manure = s.b == Defs.TASK_FERTILIZE && s.c != Defs.FERT_MINERAL;
         double yieldHa = 0;
         if (harvest) {
             yieldHa = Defs.YIELD[f.crop] * (f.fertilized ? 1.0 : 0.8);
@@ -878,14 +1072,21 @@ public class Game {
             if (dp > dpMax) dp = Math.max(0, dpMax);
             v.loadProduct = f.crop;
         }
+        double appRate = s.c == Defs.FERT_SLURRY ? Defs.APP_SLURRY : Defs.APP_DUNG;
+        if (manure) {
+            double dpMax = v.load / (appRate * area);
+            if (dp > dpMax) dp = Math.max(0, dpMax);
+        }
         dp = Math.min(dp, 1 - f.progress);
         f.progress += dp;
         if (harvest) v.load += dp * yieldHa * area;
+        if (manure) v.load = Math.max(0, v.load - dp * appRate * area);
         float[] wp = f.workPos(f.progress);
         v.x = wp[0] * Defs.TILE;
         v.y = wp[1] * Defs.TILE;
         v.heading = wp[2];
-        v.status = "Feld " + f.number + ": " + Defs.TASK_NAMES[s.b] + " " + Math.round(f.progress * 100) + " %";
+        String what = s.b == Defs.TASK_FERTILIZE ? Defs.FERT_NAMES[s.c] + " ausbringen" : Defs.TASK_NAMES[s.b];
+        v.status = "Feld " + f.number + ": " + what + " " + Math.round(f.progress * 100) + " %";
 
         if (f.progress >= 1 - 1e-9) {
             int task = f.task;
@@ -894,22 +1095,83 @@ public class Game {
             v.steps.remove(0);
             return 0;
         }
-        if (harvest && v.load >= capOf(v) - 1e-6) {
-            Vehicle helper = v.isHarvester() ? findOverloader(v) : null;
-            if (helper != null) {
-                startOverload(helper, v);
-                v.steps.add(0, new Step(WAIT_OVERLOAD, helper.id, 0, 0));
-                v.status = "Bunker voll – wartet auf Überladewagen";
-                msg("🚜 " + v.name() + ": Bunker voll – " + helper.name() + " kommt zum Überladen.");
-            } else {
-                insertUnloadTrip(v, f);
-                String what = v.isTractor() ? "Ladewagen" : "Bunker";
-                v.status = what + " voll – fährt zum Abladen";
-                msg("🚜 " + v.name() + ": " + what + " voll, fährt selbst zum Abladen"
-                        + (v.isHarvester() ? " (kein Traktor mit Kipper frei)." : "."));
+        if (manure && v.load < 0.01) {
+            int src = manureSource(s.c);
+            if (src < 0) {
+                msg("⚠ Keine " + Defs.FERT_NAMES[s.c] + " mehr am Stall – Feld " + f.number + " ist zu "
+                        + Math.round(f.progress * 100) + " % gedüngt. Später weitermachen.");
+                abort(v, null);
+                sendHomeSilently(v);
+                return 0;
             }
+            int[] back = fieldTile(f);
+            int[] gate = world.stableGate[src];
+            v.steps.add(0, new Step(GOTO, back[0], back[1], 2));
+            v.steps.add(0, new Step(LOAD_MANURE, s.c, src, 0));
+            v.steps.add(0, new Step(GOTO, gate[0], gate[1], 6));
+            return 0;
+        }
+        if (harvest && v.isHarvester()) {
+            double cap = capOf(v);
+            if (v.load >= cap * 0.8 && !helperComing(v)) {
+                Vehicle helper = findOverloader(v);
+                if (helper != null) {
+                    startOverload(helper, v);
+                    v.overloader = helper.id;
+                    msg("🚜 " + v.name() + ": Bunker " + Math.round(v.load / cap * 100) + " % – " + helper.name()
+                            + " kommt zum Überladen während der Fahrt.");
+                }
+            }
+            if (v.load >= cap - 1e-6) {
+                if (helperComing(v)) {
+                    v.steps.add(0, new Step(WAIT_OVERLOAD, v.overloader, 0, 0));
+                    msg("⏸ " + v.name() + ": Bunker voll – muss auf den Überladewagen warten.");
+                } else {
+                    insertUnloadTrip(v, f);
+                    v.status = "Bunker voll – fährt selbst zum Abladen";
+                    msg("⚠ " + v.name() + ": Bunker voll, kein Traktor mit Kipper frei – fährt selbst zum Abladen (teuer!).");
+                }
+            }
+        } else if (harvest && v.load >= capOf(v) - 1e-6) {
+            insertUnloadTrip(v, f);
+            v.status = "Ladewagen voll – fährt zum Abladen";
+            msg("🚜 " + v.name() + ": Ladewagen voll, fährt zum Abladen.");
         }
         return 0;
+    }
+
+    /** Kommt gerade ein Traktor zum Überladen (oder fährt schon nebenher)? */
+    public boolean helperComing(Vehicle h) {
+        Vehicle helper = vehicle(h.overloader);
+        if (helper == null) return false;
+        for (Step st : helper.steps) if ((st.kind == FOLLOW || st.kind == OVERLOAD) && st.a == h.id) return true;
+        return false;
+    }
+
+    /** Stall mit der meisten Gülle bzw. Mist, oder -1 */
+    public int manureSource(int mode) {
+        int best = -1;
+        for (int st = 0; st < Defs.STABLES; st++) {
+            if (!stables[st]) continue;
+            boolean slurry = Defs.S_SLURRY[st] > 0;
+            if ((mode == Defs.FERT_SLURRY) != slurry) continue;
+            if (stableManure[st] < 1) continue;
+            if (best < 0 || stableManure[st] > stableManure[best]) best = st;
+        }
+        return best;
+    }
+
+    public double manureCap(int s) {
+        return Defs.SLURRY_CAP[s] + Defs.DUNG_CAP[s];
+    }
+
+    public double manureAvailable(int mode) {
+        double sum = 0;
+        for (int st = 0; st < Defs.STABLES; st++) {
+            if (!stables[st]) continue;
+            if ((mode == Defs.FERT_SLURRY) == (Defs.S_SLURRY[st] > 0)) sum += stableManure[st];
+        }
+        return sum;
     }
 
     private void insertUnloadTrip(Vehicle v, Field f) {
@@ -945,7 +1207,7 @@ public class Game {
     private void startOverload(Vehicle helper, Vehicle h) {
         int[] park = world.parking(helper.parkSlot);
         addTrailerSteps(helper, park);
-        helper.steps.add(new Step(GOTO, (int) (h.x / Defs.TILE), (int) (h.y / Defs.TILE), 4));
+        helper.steps.add(new Step(FOLLOW, h.id, 0, 0));
         helper.steps.add(new Step(OVERLOAD, h.id, 0, 0));
         helper.steps.add(new Step(GOTO, park[0], park[1], 1));
         helper.steps.add(new Step(UNLOAD, 0, 0, 0));
@@ -1016,6 +1278,10 @@ public class Game {
     }
 
     private void abort(Vehicle v, String message) {
+        for (Forest fo : world.forests) if (fo.busyBy == v.id) {
+            fo.busyBy = -1;
+            if (fo.progress <= 0) fo.task = -1;
+        }
         for (Field f : world.fields) if (f.busyBy == v.id) {
             f.busyBy = -1;
             if (f.progress <= 0) {
@@ -1042,7 +1308,11 @@ public class Game {
     public int toolFor(int task, int crop) {
         if (task == Defs.TASK_CULTIVATE) return Defs.T_GRUBBER;
         if (task == Defs.TASK_SOW) return crop == Defs.POTATO ? Defs.T_PLANTER : Defs.T_SEEDER;
-        if (task == Defs.TASK_FERTILIZE) return Defs.T_SPREADER;
+        if (task == Defs.TASK_FERTILIZE) {
+            if (crop == Defs.FERT_SLURRY) return Defs.T_SLURRY;
+            if (crop == Defs.FERT_DUNG) return Defs.T_MANURE;
+            return Defs.T_SPREADER;
+        }
         if (task == Defs.TASK_MOW) return Defs.T_MOWER;
         if (task == Defs.TASK_HARVEST) return Defs.T_LOADER;
         return -1;
@@ -1051,7 +1321,7 @@ public class Game {
     public double taskCost(Field f, int task, int crop) {
         if (f.progress > 0) return 0;
         if (task == Defs.TASK_SOW) return Defs.SEED_COST[crop] * f.hectares();
-        if (task == Defs.TASK_FERTILIZE) return Defs.FERTILIZER_COST * f.hectares();
+        if (task == Defs.TASK_FERTILIZE && crop == Defs.FERT_MINERAL) return Defs.FERTILIZER_COST * f.hectares();
         return 0;
     }
 
@@ -1076,6 +1346,10 @@ public class Game {
             String p = toolProblem(v, toolFor(task, crop));
             if (p != null) return p;
         }
+        if (task == Defs.TASK_FERTILIZE && crop != Defs.FERT_MINERAL && manureSource(crop) < 0) {
+            return crop == Defs.FERT_SLURRY ? "Keine Gülle da – die kommt aus Kuh- und Schweinestall."
+                    : "Kein Mist da – der kommt aus Hühner- und Schafstall.";
+        }
         double cost = taskCost(f, task, crop);
         if (cost > 0 && money < cost) return "Zu wenig Geld (" + euro(cost) + " nötig).";
         return null;
@@ -1091,7 +1365,7 @@ public class Game {
         }
         f.busyBy = v.id;
         f.task = task;
-        if (task == Defs.TASK_SOW) f.taskCrop = crop;
+        if (task == Defs.TASK_SOW || task == Defs.TASK_FERTILIZE) f.taskCrop = crop;
         int[] park = world.parking(v.parkSlot);
         if (v.isTractor()) {
             int tt = toolFor(task, crop);
@@ -1105,12 +1379,19 @@ public class Game {
             }
         }
         int[] ft = fieldTile(f);
+        if (task == Defs.TASK_FERTILIZE && crop != Defs.FERT_MINERAL) {
+            int src = manureSource(crop);
+            int[] gate = world.stableGate[src];
+            v.steps.add(new Step(GOTO, gate[0], gate[1], 6));
+            v.steps.add(new Step(LOAD_MANURE, crop, src, 0));
+        }
         v.steps.add(new Step(GOTO, ft[0], ft[1], 2));
         v.steps.add(new Step(WORK, f.index, task, crop));
         v.steps.add(new Step(GOTO, park[0], park[1], 1));
         if (task == Defs.TASK_HARVEST) v.steps.add(new Step(UNLOAD, 0, 0, 0));
         if (v.isTractor()) v.steps.add(new Step(DROP, 0, 0, 0));
-        msg("👷 Helfer übernimmt: " + v.name() + " – " + Defs.TASK_NAMES[task] + " auf Feld " + f.number);
+        msg("👷 Helfer übernimmt: " + v.name() + " – " + (task == Defs.TASK_FERTILIZE ? Defs.FERT_NAMES[crop] + " ausbringen"
+                : Defs.TASK_NAMES[task]) + " auf Feld " + f.number);
         return null;
     }
 
@@ -1194,7 +1475,7 @@ public class Game {
         if (!stables[s]) return "Den " + Defs.S_NAMES[s] + " hast du noch nicht.";
         if (Defs.S_FEED[s][product] <= 0) return "Die Tiere im " + Defs.S_NAMES[s] + " fressen kein " + Defs.PRODUCT_NAMES[product] + ".";
         if (storage[product] < 0.5) return "Kein " + Defs.PRODUCT_NAMES[product] + " im Hoflager.";
-        if (stableCap(s, product) - stableFeed[s][product] < 0.5) return "Das Futterlager im " + Defs.S_NAMES[s] + " ist voll.";
+        if (stableCap(s, product) - stableFeed[s][product] < 0.01) return "Das Futterlager im " + Defs.S_NAMES[s] + " ist randvoll.";
         return null;
     }
 
@@ -1237,6 +1518,286 @@ public class Game {
         // wer auf diesen Drescher wartet, soll wieder selbst fahren
         abort(v, null);
         v.status = atHof(v) ? "steht am Hof" : "wartet";
+    }
+
+    // ------------------------------------------------------------------ Wald
+
+    public Forest forestByNumber(int nr) {
+        for (Forest f : world.forests) if (f.number == nr) return f;
+        return null;
+    }
+
+    private int[] forestTile(Forest fo) {
+        float[] wp = fo.workPos(fo.progress);
+        return new int[]{(int) wp[0], (int) wp[1]};
+    }
+
+    public int forestTool(int task) {
+        if (task == Defs.FT_PLANT) return Defs.T_TREEPLANT;
+        if (task == Defs.FT_FORWARD) return Defs.T_FWDTRAILER;
+        if (task == Defs.FT_CHIP) return Defs.T_CHIPPER;
+        return -1;
+    }
+
+    public double forestCost(Forest fo, int task, int species) {
+        if (task == Defs.FT_PLANT && fo.progress <= 0) return Defs.SEEDLING_COST[species] * fo.hectares();
+        return 0;
+    }
+
+    public String checkForestJob(Vehicle v, Forest fo, int task, int species) {
+        if (!fo.owned) return "Das Waldstück gehört dir nicht.";
+        if (!fo.canDo(task)) return Defs.FT_NAMES[task] + " geht in diesem Wald gerade nicht.";
+        if (fo.busyBy != -1 && fo.busyBy != v.id) return "In dem Wald arbeitet schon jemand.";
+        if (v.busy()) return v.name() + " ist gerade beschäftigt.";
+        if (task == Defs.FT_FELL) {
+            if (!v.isForestry() || v.m().sub != Defs.F_FELLER) return "Zum Fällen brauchst du einen Prozessor/Harvester.";
+        } else if (task == Defs.FT_FORWARD && v.isForestry()) {
+            if (v.m().sub != Defs.F_FORWARDER) return "Rücken geht mit einem Forwarder oder Traktor mit Rückewagen.";
+        } else {
+            if (!v.isTractor()) {
+                return task == Defs.FT_FORWARD ? "Rücken geht mit einem Forwarder oder Traktor mit Rückewagen."
+                        : "Dafür brauchst du einen Traktor.";
+            }
+            String p = toolProblem(v, forestTool(task));
+            if (p != null) return p;
+        }
+        double cost = forestCost(fo, task, species);
+        if (cost > 0 && money < cost) return "Zu wenig Geld (" + euro(cost) + " für Setzlinge).";
+        return null;
+    }
+
+    public String startForestJob(Vehicle v, Forest fo, int task, int species) {
+        String err = checkForestJob(v, fo, task, species);
+        if (err != null) return err;
+        double cost = forestCost(fo, task, species);
+        if (cost > 0) {
+            money -= cost;
+            msg("🌱 Setzlinge gekauft: " + euro(cost));
+        }
+        fo.busyBy = v.id;
+        fo.task = task;
+        if (task == Defs.FT_PLANT) fo.taskSpecies = species;
+        int[] park = world.parking(v.parkSlot);
+        if (v.isTractor()) {
+            int tt = forestTool(task);
+            Tool cur = tool(v.tool);
+            if (cur == null || cur.m().sub != tt || cur.m().level > v.m().level) {
+                Tool want = bestFreeTool(tt, v.m().level, v.id);
+                if (want != null) want.reservedBy = v.id;
+                v.steps.add(new Step(GOTO, park[0], park[1], 1));
+                if (cur != null) v.steps.add(new Step(DROP, 0, 0, 0));
+                v.steps.add(new Step(PICKUP, tt, 0, 0));
+            }
+        }
+        int[] ft = forestTile(fo);
+        v.steps.add(new Step(GOTO, ft[0], ft[1], 7));
+        v.steps.add(new Step(FWORK, fo.index, task, species));
+        v.steps.add(new Step(GOTO, park[0], park[1], 1));
+        if (task == Defs.FT_CHIP) v.steps.add(new Step(UNLOAD, 0, 0, 0));
+        if (v.isTractor()) v.steps.add(new Step(DROP, 0, 0, 0));
+        msg("👷 Helfer übernimmt: " + v.name() + " – " + Defs.FT_NAMES[task] + " in Wald " + fo.number);
+        return null;
+    }
+
+    public Vehicle findVehicleForForest(Forest fo, int task, int species) {
+        Vehicle best = null;
+        double bestScore = -1;
+        for (Vehicle v : vehicles) {
+            if (checkForestJob(v, fo, task, species) != null) continue;
+            double score = v.isForestry() ? v.m().rate * 100 : 1;
+            if (v.isTractor()) {
+                Tool cur = tool(v.tool);
+                int sub = forestTool(task);
+                Tool t = cur != null && cur.m().sub == sub ? cur : bestFreeTool(sub, v.m().level, v.id);
+                score = t != null ? t.m().rate + t.m().cap : 0;
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                best = v;
+            }
+        }
+        return best;
+    }
+
+    private void finishForest(Forest fo, Vehicle v, String text) {
+        fo.task = -1;
+        fo.progress = 0;
+        fo.busyBy = -1;
+        fo.taskSpecies = -1;
+        msg(text);
+        v.steps.remove(0);
+    }
+
+    private double forestWork(Vehicle v, Step s, double dt) {
+        Forest fo = world.forests.get(s.a);
+        if (fo.busyBy != v.id) {
+            abort(v, null);
+            return 0;
+        }
+        double area = fo.hectares();
+        int task = s.b;
+        if (task == Defs.FT_PLANT || task == Defs.FT_FELL) {
+            double rate = task == Defs.FT_FELL ? v.m().rate : (tool(v.tool) != null ? tool(v.tool).m().rate : 0);
+            if (rate <= 0) {
+                abort(v, "⚠ " + v.name() + " hat nicht das richtige Gerät.");
+                return 0;
+            }
+            double dp = Math.min(rate * dt / 3600.0 / area, 1 - fo.progress);
+            if (task == Defs.FT_FELL) {
+                double wood = dp * area * Defs.WOOD_YIELD[fo.species] * Math.min(1, fo.growth);
+                if (fo.logs < 0.01) fo.woodSpecies = fo.species;
+                fo.logs += wood;
+                fo.residue += wood * Defs.RESIDUE;
+            }
+            fo.progress += dp;
+            float[] wp = fo.workPos(fo.progress);
+            v.x = wp[0] * Defs.TILE;
+            v.y = wp[1] * Defs.TILE;
+            v.heading = wp[2];
+            v.status = "Wald " + fo.number + ": " + Defs.FT_NAMES[task] + " " + Math.round(fo.progress * 100) + " %";
+            if (fo.progress >= 1 - 1e-9) {
+                if (task == Defs.FT_FELL) {
+                    fo.state = Forest.FELLED;
+                    fo.growth = 0;
+                    finishForest(fo, v, String.format(Locale.GERMANY, "🪓 Wald %d gefällt: %.0f t %s liegen zum Rücken bereit.",
+                            fo.number, fo.logs, Defs.SPECIES_NAMES[fo.woodSpecies]));
+                } else {
+                    fo.state = Forest.GROWING;
+                    fo.species = fo.taskSpecies >= 0 ? fo.taskSpecies : s.c;
+                    fo.growth = 0;
+                    finishForest(fo, v, "🌱 Wald " + fo.number + " ist neu bepflanzt mit " + Defs.SPECIES_NAMES[fo.species] + ".");
+                }
+            }
+            return 0;
+        }
+        if (task == Defs.FT_FORWARD) {
+            double cap = capOf(v);
+            double rate = v.isForestry() ? v.m().rate : (tool(v.tool) != null ? tool(v.tool).m().rate : 0);
+            double total = fo.logs + v.load;
+            if (total < 0.01) {
+                finishForest(fo, v, "✅ Wald " + fo.number + ": alles Holz gerückt, liegt am Polter an der Straße.");
+                return 0;
+            }
+            double amount = Math.min(Math.min(rate * dt / 3600.0, fo.logs), cap - v.load);
+            fo.logs -= amount;
+            v.load += amount;
+            v.loadProduct = Defs.WOOD + fo.woodSpecies;
+            // Fortschritt grob: wie viel vom Holz schon weg ist
+            double startLogs = Math.max(1, fo.logs + v.load + fo.polter);
+            fo.progress = Math.max(fo.progress, Math.min(0.99, 1 - (fo.logs + v.load) / startLogs));
+            float[] wp = fo.workPos(fo.progress);
+            v.x = wp[0] * Defs.TILE;
+            v.y = wp[1] * Defs.TILE;
+            v.heading = wp[2];
+            v.status = String.format(Locale.GERMANY, "Wald %d: lädt Holz (%.0f t)", fo.number, v.load);
+            if (v.load >= cap - 0.01 || fo.logs < 0.01) {
+                int[] back = forestTile(fo);
+                v.steps.add(0, new Step(GOTO, back[0], back[1], 7));
+                v.steps.add(0, new Step(POLTER, fo.index, 0, 0));
+                v.steps.add(0, new Step(GOTO, fo.gate[0], fo.gate[1], 7));
+            }
+            return 0;
+        }
+        // Hacken
+        double cap = capOf(v);
+        Tool t = tool(v.tool);
+        double rate = t != null ? t.m().rate : 0;
+        if (fo.residue < 0.01) {
+            finishForest(fo, v, "✅ Wald " + fo.number + ": Restholz gehackt.");
+            return 0;
+        }
+        double amount = Math.min(Math.min(rate * dt / 3600.0, fo.residue), cap - v.load);
+        fo.residue -= amount;
+        v.load += amount;
+        v.loadProduct = Defs.CHIPS;
+        fo.progress = Math.min(0.99, fo.progress + amount / Math.max(1, fo.residue + amount) * 0.5);
+        float[] wp = fo.workPos(fo.progress);
+        v.x = wp[0] * Defs.TILE;
+        v.y = wp[1] * Defs.TILE;
+        v.heading = wp[2];
+        v.status = String.format(Locale.GERMANY, "Wald %d: hackt (%.0f t im Container)", fo.number, v.load);
+        if (v.load >= cap - 0.01 && fo.residue >= 0.01) {
+            int[] park = world.parking(v.parkSlot);
+            int[] back = forestTile(fo);
+            v.steps.add(0, new Step(GOTO, back[0], back[1], 7));
+            v.steps.add(0, new Step(UNLOAD, 0, 0, 0));
+            v.steps.add(0, new Step(GOTO, park[0], park[1], 1));
+        }
+        return 0;
+    }
+
+    /** Fahrzeug, das Holz vom Polter zum Sägewerk fahren kann? null = ja */
+    public String checkWood(Vehicle v, Forest fo) {
+        if (!fo.owned) return "Das Waldstück gehört dir nicht.";
+        if (fo.polter < 0.5) return "Am Polter liegt kein Holz – erst fällen und rücken.";
+        if (v.busy()) return v.name() + " ist gerade beschäftigt.";
+        if (v.isForestry()) {
+            if (v.m().sub == Defs.F_FELLER) return "Ein Prozessor kann kein Holz transportieren.";
+            return null;
+        }
+        if (!v.isTractor()) return "Dafür brauchst du einen Holz-Lkw, Forwarder oder Traktor mit Kurzholzanhänger/Rückewagen.";
+        if (toolProblem(v, Defs.T_LOGTRAILER) == null || toolProblem(v, Defs.T_FWDTRAILER) == null) return null;
+        return toolProblem(v, Defs.T_LOGTRAILER);
+    }
+
+    public Vehicle findWoodVehicle(Forest fo) {
+        Vehicle best = null;
+        double bestCap = -1;
+        for (Vehicle v : vehicles) {
+            if (checkWood(v, fo) != null) continue;
+            double cap = v.isForestry() ? v.m().cap : 0;
+            if (v.isTractor()) {
+                Tool t = bestFreeTool(Defs.T_LOGTRAILER, v.m().level, v.id);
+                if (t == null) t = bestFreeTool(Defs.T_FWDTRAILER, v.m().level, v.id);
+                Tool cur = tool(v.tool);
+                if (cur != null && (cur.m().sub == Defs.T_LOGTRAILER || cur.m().sub == Defs.T_FWDTRAILER)) t = cur;
+                cap = t != null ? t.m().cap : 0;
+            }
+            if (cap > bestCap) {
+                bestCap = cap;
+                best = v;
+            }
+        }
+        return best;
+    }
+
+    public String startWoodJob(Vehicle v, Forest fo, boolean repeat) {
+        String err = checkWood(v, fo);
+        if (err != null) return err;
+        int[] park = world.parking(v.parkSlot);
+        if (v.isTractor()) {
+            Tool cur = tool(v.tool);
+            boolean ok = cur != null && (cur.m().sub == Defs.T_LOGTRAILER || cur.m().sub == Defs.T_FWDTRAILER)
+                    && cur.m().level <= v.m().level;
+            if (!ok) {
+                int sub = toolProblem(v, Defs.T_LOGTRAILER) == null ? Defs.T_LOGTRAILER : Defs.T_FWDTRAILER;
+                Tool want = bestFreeTool(sub, v.m().level, v.id);
+                if (want != null) want.reservedBy = v.id;
+                v.steps.add(new Step(GOTO, park[0], park[1], 1));
+                if (cur != null) v.steps.add(new Step(DROP, 0, 0, 0));
+                v.steps.add(new Step(PICKUP, sub, 0, 0));
+            }
+        }
+        int[] saw = world.traderGate[Defs.B_SAWMILL];
+        v.steps.add(new Step(GOTO, fo.gate[0], fo.gate[1], 7));
+        v.steps.add(new Step(LOAD_POLTER, fo.index, 0, 0));
+        v.steps.add(new Step(GOTO, saw[0], saw[1], 3));
+        v.steps.add(new Step(SELL, Defs.B_SAWMILL, 0, 0));
+        v.steps.add(new Step(GOTO, park[0], park[1], 1));
+        if (repeat) v.steps.add(new Step(REPEAT_WOOD, fo.index, 0, 0));
+        if (v.isTractor()) v.steps.add(new Step(DROP, 0, 0, 0));
+        msg("👷 Helfer übernimmt: " + v.name() + " fährt Holz von Wald " + fo.number + " zum Sägewerk"
+                + (repeat ? " – bis der Polter leer ist." : " – eine Ladung."));
+        return null;
+    }
+
+    public String buyForest(Forest fo) {
+        if (fo.owned) return "Gehört dir schon.";
+        if (money < fo.price()) return "Zu wenig Geld.";
+        money -= fo.price();
+        fo.owned = true;
+        if (fo.growth > 1) fo.growth = 1;
+        return null;
     }
 
     // ----------------------------------------------------------------- Kaufen
@@ -1328,7 +1889,30 @@ public class Game {
 
     public JSONObject toJson() throws JSONException {
         JSONObject o = new JSONObject();
-        o.put("v", 4);
+        o.put("v", 5);
+        o.put("snow", snowCover);
+        o.put("eToday", energyToday);
+        JSONArray sm = new JSONArray();
+        for (int s = 0; s < Defs.STABLES; s++) sm.put(stableManure[s]);
+        o.put("manure", sm);
+        JSONArray foa = new JSONArray();
+        for (Forest fo : world.forests) {
+            JSONObject j = new JSONObject();
+            j.put("o", fo.owned);
+            j.put("s", fo.state);
+            j.put("sp", fo.species);
+            j.put("g", fo.growth);
+            j.put("l", fo.logs);
+            j.put("p", fo.polter);
+            j.put("r", fo.residue);
+            j.put("ws", fo.woodSpecies);
+            j.put("t", fo.task);
+            j.put("pr", fo.progress);
+            j.put("b", fo.busyBy);
+            j.put("ts", fo.taskSpecies);
+            foa.put(j);
+        }
+        o.put("forests", foa);
         o.put("seed", world.seed);
         o.put("money", money);
         o.put("time", time);
@@ -1346,10 +1930,10 @@ public class Game {
         o.put("pvHouse", pvHouse);
         o.put("pvHall", pvHall);
         JSONArray st = new JSONArray();
-        for (int i = 0; i < 4; i++) st.put(storage[i]);
+        for (int i = 0; i < Defs.PRODUCTS; i++) st.put(storage[i]);
         o.put("storage", st);
         JSONArray pf = new JSONArray();
-        for (int b = 0; b < 3; b++) for (int p = 0; p < 4; p++) pf.put(priceFactor[b][p]);
+        for (int b = 0; b < Defs.BUYERS; b++) for (int p = 0; p < Defs.PRODUCTS; p++) pf.put(priceFactor[b][p]);
         o.put("prices", pf);
         JSONArray sb = new JSONArray(), sf = new JSONArray(), sp = new JSONArray();
         for (int s = 0; s < Defs.STABLES; s++) {
@@ -1397,6 +1981,7 @@ public class Game {
             j.put("load", v.load);
             j.put("lp", v.loadProduct);
             j.put("timer", v.timer);
+            j.put("ol", v.overloader);
             JSONArray sa = new JSONArray();
             for (Step s : v.steps) sa.put(new JSONArray().put(s.kind).put(s.a).put(s.b).put(s.c));
             j.put("steps", sa);
@@ -1410,7 +1995,7 @@ public class Game {
     }
 
     public static Game fromJson(JSONObject o) throws JSONException {
-        if (o.optInt("v", 1) < 4) throw new JSONException("alter Spielstand");
+        if (o.optInt("v", 1) < 5) throw new JSONException("alter Spielstand");
         Game g = new Game();
         g.world = new World(o.getLong("seed"));
         g.money = o.getDouble("money");
@@ -1429,9 +2014,31 @@ public class Game {
         g.pvHouse = o.optBoolean("pvHouse", false);
         g.pvHall = o.optBoolean("pvHall", false);
         JSONArray st = o.getJSONArray("storage");
-        for (int i = 0; i < 4; i++) g.storage[i] = st.getDouble(i);
+        for (int i = 0; i < Defs.PRODUCTS; i++) g.storage[i] = st.getDouble(i);
         JSONArray pf = o.getJSONArray("prices");
-        for (int b = 0; b < 3; b++) for (int p = 0; p < 4; p++) g.priceFactor[b][p] = pf.getDouble(b * 4 + p);
+        for (int b = 0; b < Defs.BUYERS; b++)
+            for (int p = 0; p < Defs.PRODUCTS; p++) g.priceFactor[b][p] = pf.getDouble(b * Defs.PRODUCTS + p);
+        g.snowCover = o.optDouble("snow", 0);
+        g.energyToday = o.optDouble("eToday", 0);
+        JSONArray sm = o.getJSONArray("manure");
+        for (int s = 0; s < Defs.STABLES; s++) g.stableManure[s] = sm.getDouble(s);
+        JSONArray foa = o.getJSONArray("forests");
+        for (int i = 0; i < foa.length() && i < g.world.forests.size(); i++) {
+            JSONObject j = foa.getJSONObject(i);
+            Forest fo = g.world.forests.get(i);
+            fo.owned = j.getBoolean("o");
+            fo.state = j.getInt("s");
+            fo.species = j.getInt("sp");
+            fo.growth = j.getDouble("g");
+            fo.logs = j.getDouble("l");
+            fo.polter = j.getDouble("p");
+            fo.residue = j.getDouble("r");
+            fo.woodSpecies = j.getInt("ws");
+            fo.task = j.getInt("t");
+            fo.progress = j.getDouble("pr");
+            fo.busyBy = j.getInt("b");
+            fo.taskSpecies = j.getInt("ts");
+        }
         JSONArray sb = o.getJSONArray("stables"), sf = o.getJSONArray("stableFeed"), sp = o.getJSONArray("pvStable");
         for (int s = 0; s < Defs.STABLES; s++) {
             g.stables[s] = sb.getBoolean(s);
@@ -1479,6 +2086,7 @@ public class Game {
             v.load = j.getDouble("load");
             v.loadProduct = j.getInt("lp");
             v.timer = j.optDouble("timer", 0);
+            v.overloader = j.optInt("ol", -1);
             JSONArray sa = j.getJSONArray("steps");
             for (int k = 0; k < sa.length(); k++) {
                 JSONArray s = sa.getJSONArray(k);

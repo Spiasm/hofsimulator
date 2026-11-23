@@ -37,7 +37,10 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     private static final int RED = 0xFFC62828;
     private static final int ORANGE = 0xFFEF6C00;
 
-    private static final int PICK_NONE = 0, PICK_FIELD = 1, PICK_GOTO = 2, PICK_WIND = 3;
+    private static final int PICK_NONE = 0, PICK_FIELD = 1, PICK_GOTO = 2, PICK_WIND = 3, PICK_FOREST = 4;
+    private final Ambience sound = new Ambience();
+    private boolean soundOn = true;
+    private int panelForest = -1;
 
     private Game game;
     private MapView map;
@@ -68,12 +71,70 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         super.onPause();
         save(false);
         running = false;
+        sound.stop();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         if (game != null && map != null) startLoop();
+    }
+
+    private void updateSound() {
+        if (!soundOn || paused || map == null) {
+            sound.stop();
+            return;
+        }
+        sound.start();
+        float cxw = map.camX, cyw = map.camY, sc = map.scale;
+        float viewR = Math.max(getResources().getDisplayMetrics().widthPixels, getResources().getDisplayMetrics().heightPixels) / sc / 2f;
+        float zoomNear = Math.min(1f, Math.max(0.15f, sc / 3f));
+        boolean winter = game.weatherType == 3;
+        double day = game.daylight();
+        World w = game.world;
+        // Vögel: tagsüber, nicht im Winter/Regen
+        sound.birds = (float) (day > 0 && !winter && game.weatherType != 2 ? 0.4 + 0.6 * Math.min(1, day * 2) : 0) * zoomNear;
+        // Wind in Blättern: nahe Wald
+        float forest = 0;
+        for (Forest fo : w.forests) {
+            float d = dist(cxw, cyw, (fo.x + fo.w / 2f) * Defs.TILE, (fo.y + fo.h / 2f) * Defs.TILE);
+            if (fo.state == Forest.GROWING) forest = Math.max(forest, near(d, viewR * 1.3f) * (float) Math.min(1, fo.growth + 0.2));
+        }
+        sound.leaves = Math.max(0.12f, forest) * (float) Math.min(1.2, 0.4 + game.weatherWind) * zoomNear;
+        sound.wind = (float) game.weatherWind;
+        float vil = 0;
+        for (int[] vc : w.villageCenters) vil = Math.max(vil, near(dist(cxw, cyw, vc[0] * Defs.TILE, vc[1] * Defs.TILE), viewR * 1.5f));
+        sound.village = vil * (day > 0 ? 0.8f : 0.25f) * zoomNear;
+        sound.rain = game.weatherType == 2 ? 0.8f : 0;
+        float eng = 0;
+        for (Game.Vehicle v : game.vehicles) {
+            if (!v.busy()) continue;
+            eng = Math.max(eng, near(dist(cxw, cyw, v.x, v.y), viewR));
+        }
+        sound.engine = eng * 0.8f * zoomNear;
+        for (int s = 0; s < Defs.STABLES; s++) {
+            float a = 0;
+            if (game.stables[s]) {
+                int[] lot = w.stableLot[s];
+                a = near(dist(cxw, cyw, (lot[0] + lot[2] / 2f) * Defs.TILE, (lot[1] + lot[3] / 2f) * Defs.TILE), viewR) * zoomNear;
+            }
+            sound.animals[s] = a;
+        }
+        sound.siren = game.fireField >= 0 && game.fireTruck != null && game.fireTruck.state == 0 && fireAge < 25 ? 0.6f : 0;
+        sound.horn = game.fireTruck != null && game.fireTruck.state != 1 ? 0.25f + 0.75f * near(dist(cxw, cyw, game.fireTruck.x, game.fireTruck.y), viewR * 1.5f) : 0;
+        if (game.fireField >= 0) fireAge += 0.3f;
+        else fireAge = 0;
+    }
+
+    private float fireAge;
+
+    private static float dist(float ax, float ay, float bx, float by) {
+        return (float) Math.hypot(ax - bx, ay - by);
+    }
+
+    /** 1 = mitten drin, 0 = weit weg */
+    private static float near(float d, float r) {
+        return Math.max(0, Math.min(1, 1.3f - d / Math.max(1, r)));
     }
 
     @Override
@@ -128,6 +189,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
 
     private void showStart() {
         map = null;
+        sound.stop();
         ScrollView sv = new ScrollView(this);
         sv.setBackgroundColor(BG);
         sv.setFillViewport(true);
@@ -160,6 +222,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             }
         }));
         add(root, button("❓  Anleitung", BTN, v -> showHelp()));
+        add(root, text("© 2026 SM", 13, 0xFF9DB08C, false));
         setContentView(sv);
     }
 
@@ -183,10 +246,22 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                     + "Traktor und Kipper hinbringen (Stall antippen → Futter bringen). Milch, Eier usw. werden automatisch verkauft.\n\n"
                     + "☀💨 Energie: PV aufs Dach, Solarpark auf ein eigenes Feld oder ein Windrad auf freie Wiese (Kaufen/Verkaufen → Bauen). "
                     + "Bringt jeden Tag Geld – je nach Sonne und Wind.\n\n"
+                    + "🌲 Wald: Waldstück antippen → kaufen. Pflanzen (Fichte, Buche, Eiche) mit Traktor + Pflanzmaschine. "
+                    + "Ist der Wald groß: Fällen mit Prozessor/Harvester → Rücken (Forwarder oder Traktor + Rückewagen) bringt die Stämme "
+                    + "an den Polter an der Straße → Holz verkaufen fährt es mit Holz-Lkw oder Kurzholzanhänger zum Sägewerk. "
+                    + "Restholz mit dem Holzhacker zu Hackschnitzeln machen (Biogas kauft sie).\n\n"
+                    + "💩 Gülle & Mist: Kühe und Schweine machen Gülle, Hühner und Schafe Mist. Beim Düngen kannst du statt Kunstdünger "
+                    + "Gülle (Güllefass) oder Mist (Miststreuer) nehmen – kostet nichts, muss aber vom Stall geholt werden.\n\n"
+                    + "🚛 Überladen: Bei 80 % Bunker wird ein Traktor mit Kipper gerufen, der während der Fahrt überlädt.\n\n"
+                    + "🏠 Hof antippen: 3D-Ansicht mit all deinen Maschinen, dazu Lager, Verkaufen und Futter.\n\n"
+                    + "🌦 Wetter: Sonne, Wolken, Regen und im Winter Schnee – nur zum Anschauen, die Ernte leidet nicht. "
+                    + "PV und Windräder zeigen ihre aktuelle Leistung in %.\n\n"
+                    + "🔊 Geräusche: im Menü ein- und ausschalten.\n\n"
                     + "🔥 Bei trockenem Wetter kann ein Stoppelfeld brennen – die Feuerwehr kommt und löscht.\n\n"
                     + "🎨 Grafik: Im Menü zwischen Einfach, Mittel und Hoch umschalten.\n\n"
                     + "💾 Speichern: automatisch jede Minute, beim Verlassen und im Menü.\n\n"
-                    + "⏩ Zeit: oben rechts. Weizen wächst ca. 7 Tage – bei 6000× knapp 2 Minuten.";
+                    + "⏩ Zeit: oben rechts. Weizen wächst ca. 7 Tage – bei 6000× knapp 2 Minuten.\n\n"
+                    + "© 2026 SM";
 
     private void showHelp() {
         new AlertDialog.Builder(this).setTitle("Anleitung").setMessage(HELP).setPositiveButton("OK", null).show();
@@ -202,6 +277,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         map.game = game;
         map.tapListener = this;
         applyDetail(getPreferences(MODE_PRIVATE).getInt("detail", 1));
+        soundOn = getPreferences(MODE_PRIVATE).getBoolean("sound", true);
         int[] h = game.world.hof;
         map.centerOn((h[0] + h[2] / 2f) * Defs.TILE, (h[1] + h[3] / 2f) * Defs.TILE + 40);
         frame.addView(map, new FrameLayout.LayoutParams(-1, -1));
@@ -302,6 +378,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                 lastUi = now;
                 updateTop();
                 refreshPanel();
+                updateSound();
                 if (now > tickerUntil) tickerText.setText("");
             }
             if (now - lastSave > 60000) {
@@ -379,6 +456,17 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             hidePanel();
             return;
         }
+        if (pickMode == PICK_FOREST) {
+            Game.Vehicle v = game.vehicle(pickVehicle);
+            if (!w.in(tx, ty) || w.forestAt[tx][ty] < 0) {
+                toast("Bitte auf eines deiner Waldstücke tippen.");
+                return;
+            }
+            pickMode = PICK_NONE;
+            Forest fo = w.forests.get(w.forestAt[tx][ty]);
+            if (v != null) chooseForestTaskFor(v, fo);
+            return;
+        }
         if (pickMode == PICK_FIELD) {
             Game.Vehicle v = game.vehicle(pickVehicle);
             if (!w.in(tx, ty) || w.fieldAt[tx][ty] < 0) {
@@ -404,8 +492,19 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             showVehiclePanel(hit);
             return;
         }
+        for (int[] wd : game.winds) {
+            if (Math.hypot((wd[0] + 0.5f) * Defs.TILE - mx, (wd[1] + 0.5f) * Defs.TILE - my) < Math.max(10, 30 / map.scale)) {
+                showEnergyInfo();
+                return;
+            }
+        }
         if (w.in(tx, ty) && w.fieldAt[tx][ty] >= 0) {
-            showFieldPanel(w.fields.get(w.fieldAt[tx][ty]));
+            Field ff = w.fields.get(w.fieldAt[tx][ty]);
+            showFieldPanel(ff);
+            return;
+        }
+        if (w.in(tx, ty) && w.forestAt[tx][ty] >= 0) {
+            showForestPanel(w.forests.get(w.forestAt[tx][ty]));
             return;
         }
         for (int s = 0; s < Defs.STABLES; s++) {
@@ -414,14 +513,14 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                 return;
             }
         }
-        for (int b = 0; b < 3; b++) {
+        for (int b = 0; b < Defs.BUYERS; b++) {
             if (inRect(w.trader[b], tx, ty)) {
                 showTraderInfo(b);
                 return;
             }
         }
         if (inRect(w.hof, tx, ty)) {
-            showStorage();
+            showHof3D();
             return;
         }
         hidePanel();
@@ -437,6 +536,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         panelKind = 0;
         map.selectedVehicle = -1;
         map.selectedField = -1;
+        map.selectedForest = -1;
         panel.setVisibility(View.GONE);
     }
 
@@ -470,6 +570,8 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             panelText.setText(fieldText(game.world.fields.get(map.selectedField)));
         } else if (panelKind == 3) {
             panelText.setText(stableText(panelStable));
+        } else if (panelKind == 4 && panelForest >= 0) {
+            panelText.setText(forestText(game.world.forests.get(panelForest)));
         }
     }
 
@@ -482,8 +584,12 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         } else {
             sb.append("\n").append(v.m().info);
         }
-        if (v.load > 0 && v.loadProduct >= 0) {
-            sb.append(String.format(Locale.GERMANY, "\nLadung: %.1f t %s", v.load, Defs.PRODUCT_NAMES[v.loadProduct]));
+        if (v.load > 0) {
+            String what = v.loadProduct == -2 ? "m³ Gülle" : v.loadProduct == -3 ? "t Mist"
+                    : v.loadProduct >= 0 ? "t " + Defs.PRODUCT_NAMES[v.loadProduct] : "t";
+            double cap = game.capOf(v);
+            sb.append(String.format(Locale.GERMANY, "\nLadung: %.1f %s", v.load, what));
+            if (cap > 0) sb.append(String.format(Locale.GERMANY, " (%.0f %%)", 100 * v.load / cap));
         }
         if (v.busy()) sb.append("\n👷 Helfer arbeitet");
         return sb.toString();
@@ -496,11 +602,20 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         map.selectedField = -1;
         openPanel("🚜 " + v.name(), vehicleText(v));
         List<Button> bs = new ArrayList<>();
-        bs.add(button("🌾 Feldarbeit", GREEN, x -> {
-            pickMode = PICK_FIELD;
-            pickVehicle = v.id;
-            showPickHint("Tippe auf das Feld, auf dem " + v.name() + " arbeiten soll.");
-        }));
+        if (!v.isForestry()) {
+            bs.add(button("🌾 Feldarbeit", GREEN, x -> {
+                pickMode = PICK_FIELD;
+                pickVehicle = v.id;
+                showPickHint("Tippe auf das Feld, auf dem " + v.name() + " arbeiten soll.");
+            }));
+        }
+        if (v.isForestry() || v.isTractor()) {
+            bs.add(button("🌲 Waldarbeit", GREEN, x -> {
+                pickMode = PICK_FOREST;
+                pickVehicle = v.id;
+                showPickHint("Tippe auf das Waldstück, in dem " + v.name() + " arbeiten soll.");
+            }));
+        }
         if (v.isTractor()) {
             bs.add(button("💰 Ware verkaufen", ORANGE, x -> chooseSell(v)));
             bs.add(button("🐾 Futter bringen", ORANGE, x -> chooseFeed(v, -1)));
@@ -617,6 +732,8 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     private void autoTask(final Field f, final int task) {
         if (task == Defs.TASK_SOW && f.progress <= 0) {
             chooseCrop(f, crop -> autoTaskCrop(f, task, crop));
+        } else if (task == Defs.TASK_FERTILIZE && f.progress <= 0) {
+            chooseFert(f, mode -> autoTaskCrop(f, task, mode));
         } else {
             autoTaskCrop(f, task, f.taskCrop >= 0 ? f.taskCrop : Defs.WHEAT);
         }
@@ -655,6 +772,16 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         void onCrop(int crop);
     }
 
+    private void chooseFert(final Field f, final CropCallback cb) {
+        String[] items = {
+                "🧪 Kunstdünger – " + Game.euro(Defs.FERTILIZER_COST * f.hectares()) + " (Düngerstreuer)",
+                String.format(Locale.GERMANY, "💧 Gülle – kostenlos, %.0f m³ in den Ställen (Güllefass)", game.manureAvailable(Defs.FERT_SLURRY)),
+                String.format(Locale.GERMANY, "💩 Mist – kostenlos, %.0f t in den Ställen (Miststreuer)", game.manureAvailable(Defs.FERT_DUNG))};
+        new AlertDialog.Builder(this).setTitle("Womit düngen auf Feld " + f.number + "?")
+                .setItems(items, (d, which) -> cb.onCrop(which == 0 ? Defs.FERT_MINERAL : which == 1 ? Defs.FERT_SLURRY : Defs.FERT_DUNG))
+                .show();
+    }
+
     private void chooseCrop(final Field f, final CropCallback cb) {
         String[] items = new String[4];
         int[] order = {Defs.WHEAT, Defs.MAIZE, Defs.POTATO, Defs.GRASS};
@@ -676,10 +803,14 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
             if (!f.owned || !f.canDo(t)) continue;
             int probeCrop = t == Defs.TASK_SOW ? (v.tool >= 0 && game.tool(v.tool) != null
                     && game.tool(v.tool).m().sub == Defs.T_PLANTER ? Defs.POTATO : Defs.WHEAT) : Defs.WHEAT;
+            if (t == Defs.TASK_FERTILIZE) probeCrop = Defs.FERT_MINERAL;
             String err = game.checkFieldJob(v, f, t, probeCrop);
             if (t == Defs.TASK_SOW && err != null) {
                 String e2 = game.checkFieldJob(v, f, t, Defs.POTATO);
                 if (e2 == null) err = null;
+            }
+            if (t == Defs.TASK_FERTILIZE && err != null) {
+                if (game.checkFieldJob(v, f, t, Defs.FERT_SLURRY) == null || game.checkFieldJob(v, f, t, Defs.FERT_DUNG) == null) err = null;
             }
             if (err == null) {
                 labels.add(taskIcon(t) + " " + Defs.TASK_NAMES[t]);
@@ -705,6 +836,12 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                             if (err != null) toast(err);
                             showVehiclePanel(v);
                         });
+                    } else if (task == Defs.TASK_FERTILIZE && f.progress <= 0) {
+                        chooseFert(f, mode -> {
+                            String err = game.startFieldJob(v, f, task, mode);
+                            if (err != null) toast(err);
+                            showVehiclePanel(v);
+                        });
                     } else {
                         String err = game.startFieldJob(v, f, task, f.taskCrop >= 0 ? f.taskCrop : Defs.WHEAT);
                         if (err != null) toast(err);
@@ -716,7 +853,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     private void chooseSell(final Game.Vehicle v) {
         final List<Integer> prods = new ArrayList<>();
         List<String> labels = new ArrayList<>();
-        for (int p = 0; p < 4; p++) {
+        for (int p = 0; p < Defs.PRODUCTS; p++) {
             if (game.storage[p] < 0.5) continue;
             prods.add(p);
             labels.add(String.format(Locale.GERMANY, "%s – %.1f t im Lager, bis %s/t", Defs.PRODUCT_NAMES[p],
@@ -734,7 +871,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         final List<Integer> buyers = new ArrayList<>();
         List<String> labels = new ArrayList<>();
         int best = game.bestBuyer(product);
-        for (int b = 0; b < 3; b++) {
+        for (int b = 0; b < Defs.BUYERS; b++) {
             if (!game.buys(b, product)) continue;
             buyers.add(b);
             labels.add(Defs.BUYER_NAMES[b] + " – " + Game.euro(game.price(b, product)) + "/t" + (b == best ? "  ⭐ bester Preis" : "")
@@ -752,9 +889,14 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         String[] items = {"🚛 Nur 1 Ladung", String.format(Locale.GERMANY, "🔁 Fahren bis leer (%.1f t)", game.storage[product])};
         new AlertDialog.Builder(this).setTitle(Defs.PRODUCT_NAMES[product] + " " + Defs.BUYER_TO[buyer])
                 .setItems(items, (d, which) -> {
-                    String err = game.startSellJob(v, product, buyer, which == 1);
+                    Game.Vehicle tr = v != null ? v : game.findTransportTractor();
+                    if (tr == null) {
+                        toast(game.transportProblem());
+                        return;
+                    }
+                    String err = game.startSellJob(tr, product, buyer, which == 1);
                     if (err != null) toast(err);
-                    showVehiclePanel(v);
+                    showVehiclePanel(tr);
                 }).show();
     }
 
@@ -829,6 +971,12 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         double days = game.stableDays(s);
         sb.append(String.format(Locale.GERMANY, "%s Futter reicht noch %.0f Tage", days < 3 ? "⚠" : "✅", days));
         sb.append("\nEinnahmen bis ").append(Game.euro(Defs.S_INCOME[s])).append("/Tag");
+        if (game.manureCap(s) > 0) {
+            boolean slurry = Defs.S_SLURRY[s] > 0;
+            sb.append(String.format(Locale.GERMANY, "\n%s: %.0f von %.0f %s", slurry ? "💧 Güllegrube" : "💩 Misthaufen",
+                    game.stableManure[s], game.manureCap(s), slurry ? "m³" : "t"));
+            if (game.stableManure[s] > 0.9 * game.manureCap(s)) sb.append(" ⚠ fast voll – zum Düngen ausbringen!");
+        }
         if (game.pvStable[s]) sb.append(" • ☀ PV auf dem Dach");
         return sb.toString();
     }
@@ -861,17 +1009,261 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         addPanelButtons(bs.toArray(new Button[0]));
     }
 
-    private void showTraderInfo(int b) {
+    private void showTraderInfo(final int b) {
         StringBuilder sb = new StringBuilder();
-        for (int p = 0; p < 4; p++) {
+        for (int p = 0; p < Defs.PRODUCTS; p++) {
             if (!game.buys(b, p)) continue;
             sb.append(String.format(Locale.GERMANY, "• %s: %s/t", Defs.PRODUCT_NAMES[p], Game.euro(game.price(b, p))));
             if (b == game.bonusBuyer && p == game.bonusProduct) sb.append("  📢 Sonder-Nachfrage!");
             sb.append("\n");
         }
-        sb.append("\nZum Verkaufen: Traktor antippen → „Ware verkaufen“.");
+        if (b == Defs.B_SAWMILL) sb.append("\nHolz bringst du direkt vom Polter am Wald hierher: Waldstück antippen → „Holz verkaufen“.");
         new AlertDialog.Builder(this).setTitle(Defs.BUYER_NAMES[b] + " kauft:").setMessage(sb.toString())
-                .setPositiveButton("OK", null).show();
+                .setPositiveButton("OK", null)
+                .setNeutralButton("💰 Hierhin verkaufen", (d, w) -> sellTo(b)).show();
+    }
+
+    /** Vom Händler aus verkaufen: Ware wählen, Traktor wird automatisch gesucht */
+    private void sellTo(final int b) {
+        if (b == Defs.B_SAWMILL) {
+            final List<Forest> fs = new ArrayList<>();
+            List<String> labels = new ArrayList<>();
+            for (Forest fo : game.world.forests) {
+                if (!fo.owned || fo.polter < 0.5) continue;
+                fs.add(fo);
+                labels.add(String.format(Locale.GERMANY, "🌲 Wald %d – %.0f t %s am Polter", fo.number, fo.polter, Defs.SPECIES_NAMES[fo.woodSpecies]));
+            }
+            if (fs.isEmpty() && game.storage[Defs.CHIPS] < 0.5) {
+                toast("Gerade liegt kein Holz am Polter.");
+                return;
+            }
+            if (fs.isEmpty()) {
+                chooseAmount(null, Defs.CHIPS, b);
+                return;
+            }
+            new AlertDialog.Builder(this).setTitle("Holz von welchem Wald?")
+                    .setItems(labels.toArray(new String[0]), (d, which) -> chooseWoodAmount(fs.get(which))).show();
+            return;
+        }
+        final List<Integer> prods = new ArrayList<>();
+        List<String> labels = new ArrayList<>();
+        for (int p = 0; p < Defs.PRODUCTS; p++) {
+            if (!game.buys(b, p) || game.storage[p] < 0.5) continue;
+            prods.add(p);
+            labels.add(String.format(Locale.GERMANY, "%s – %.1f t im Lager, %s/t", Defs.PRODUCT_NAMES[p], game.storage[p],
+                    Game.euro(game.price(b, p))));
+        }
+        if (prods.isEmpty()) {
+            toast("Du hast nichts im Lager, was " + Defs.BUYER_NAMES[b] + " kauft.");
+            return;
+        }
+        new AlertDialog.Builder(this).setTitle("Was " + Defs.BUYER_TO[b] + "?")
+                .setItems(labels.toArray(new String[0]), (d, which) -> chooseAmount(null, prods.get(which), b)).show();
+    }
+
+    // ------------------------------------------------------------------ Wald
+
+    private String forestText(Forest fo) {
+        String s = String.format(Locale.GERMANY, "%.1f ha • ", fo.hectares()) + fo.stateText();
+        if (!fo.owned) s += "\nGehört einem Nachbarn – Preis: " + Game.euro(fo.price());
+        if (fo.busyBy >= 0) {
+            Game.Vehicle v = game.vehicle(fo.busyBy);
+            if (v != null) s += "\n👷 " + v.name() + ": " + v.status;
+        }
+        if (fo.owned && fo.state == Forest.GROWING && fo.growth < 1) {
+            s += String.format(Locale.GERMANY, "\nHiebreif in ca. %.0f Tagen", (1 - fo.growth) * Defs.TREE_DAYS[fo.species]);
+        }
+        return s;
+    }
+
+    private void showForestPanel(final Forest fo) {
+        panelKind = 4;
+        panelForest = fo.index;
+        map.selectedForest = fo.index;
+        map.selectedField = -1;
+        map.selectedVehicle = -1;
+        openPanel((fo.owned ? "★ " : "") + "🌲 Wald " + fo.number, forestText(fo));
+        List<Button> bs = new ArrayList<>();
+        if (!fo.owned) {
+            bs.add(button("🛒 Kaufen (" + Game.euro(fo.price()) + ")", ORANGE, x ->
+                    confirmBuy("Wald " + fo.number, fo.price(), () -> {
+                        String e = game.buyForest(fo);
+                        if (e == null) handler.post(() -> showForestPanel(fo));
+                        return e;
+                    })));
+        } else {
+            for (int t = 0; t < 4; t++) {
+                if (!fo.canDo(t)) continue;
+                final int task = t;
+                String icon = t == Defs.FT_PLANT ? "🌱" : t == Defs.FT_FELL ? "🪓" : t == Defs.FT_FORWARD ? "🚜" : "🪵";
+                bs.add(button(icon + " " + Defs.FT_NAMES[t] + (fo.progress > 0 && fo.task == t ? " (weiter)" : ""), GREEN,
+                        x -> autoForest(fo, task)));
+            }
+            if (fo.polter >= 0.5) {
+                bs.add(button("💰 Holz verkaufen", ORANGE, x -> chooseWoodAmount(fo)));
+            }
+        }
+        if (!bs.isEmpty()) addPanelButtons(bs.toArray(new Button[0]));
+    }
+
+    private void autoForest(final Forest fo, final int task) {
+        if (task == Defs.FT_PLANT && fo.progress <= 0) {
+            chooseSpecies(fo, sp -> autoForestSp(fo, task, sp));
+        } else {
+            autoForestSp(fo, task, fo.taskSpecies >= 0 ? fo.taskSpecies : Defs.SPRUCE);
+        }
+    }
+
+    private void autoForestSp(Forest fo, int task, int species) {
+        Game.Vehicle v = game.findVehicleForForest(fo, task, species);
+        if (v == null) {
+            String reason = null;
+            for (Game.Vehicle c : game.vehicles) {
+                String e = game.checkForestJob(c, fo, task, species);
+                if (reason == null || (e != null && !e.contains("beschäftigt"))) reason = e;
+            }
+            if (task == Defs.FT_FELL) {
+                boolean have = false;
+                for (Game.Vehicle c : game.vehicles) if (c.isForestry() && c.m().sub == Defs.F_FELLER) have = true;
+                if (!have) reason = "Zum Fällen brauchst du einen Prozessor oder Harvester (Shop → 🌲 Forstmaschinen).";
+            }
+            new AlertDialog.Builder(this).setTitle("Keine Maschine frei")
+                    .setMessage(reason != null ? reason : "Gerade ist keine passende Maschine frei.")
+                    .setPositiveButton("OK", null).show();
+            return;
+        }
+        String err = game.startForestJob(v, fo, task, species);
+        if (err != null) toast(err);
+        showForestPanel(fo);
+    }
+
+    private void chooseSpecies(final Forest fo, final CropCallback cb) {
+        String[] items = new String[3];
+        for (int i = 0; i < 3; i++) {
+            items[i] = String.format(Locale.GERMANY, "%s %s – Setzlinge %s, wächst ca. %.0f Tage, %s/t", Defs.SPECIES_ICON[i],
+                    Defs.SPECIES_NAMES[i], Game.euro(Defs.SEEDLING_COST[i] * fo.hectares()), Defs.TREE_DAYS[i],
+                    Game.euro(Defs.BUY_BASE[Defs.B_SAWMILL][Defs.WOOD + i]));
+        }
+        new AlertDialog.Builder(this).setTitle("Was pflanzen in Wald " + fo.number + "?")
+                .setItems(items, (d, which) -> cb.onCrop(which)).show();
+    }
+
+    private void chooseForestTaskFor(final Game.Vehicle v, final Forest fo) {
+        final List<Integer> tasks = new ArrayList<>();
+        List<String> labels = new ArrayList<>();
+        String firstErr = fo.owned ? null : "Wald " + fo.number + " gehört dir nicht. Tippe ihn an, um ihn zu kaufen.";
+        for (int t = 0; t < 4 && fo.owned; t++) {
+            if (!fo.canDo(t)) continue;
+            String err = game.checkForestJob(v, fo, t, Defs.SPRUCE);
+            if (err == null) {
+                tasks.add(t);
+                labels.add(Defs.FT_NAMES[t]);
+            } else if (firstErr == null) firstErr = err;
+        }
+        if (fo.owned && fo.polter >= 0.5 && game.checkWood(v, fo) == null) {
+            tasks.add(-1);
+            labels.add("💰 Holz zum Sägewerk fahren");
+        }
+        if (tasks.isEmpty()) {
+            new AlertDialog.Builder(this).setTitle("Geht gerade nicht")
+                    .setMessage(firstErr != null ? firstErr : "In Wald " + fo.number + " gibt es gerade nichts zu tun.\n" + fo.stateText())
+                    .setPositiveButton("OK", null).show();
+            showVehiclePanel(v);
+            return;
+        }
+        new AlertDialog.Builder(this).setTitle(v.name() + " in Wald " + fo.number)
+                .setItems(labels.toArray(new String[0]), (d, which) -> {
+                    int task = tasks.get(which);
+                    if (task == -1) {
+                        String[] items = {"🚛 Nur 1 Ladung", "🔁 Fahren bis der Polter leer ist"};
+                        new AlertDialog.Builder(this).setTitle("Holz zum Sägewerk").setItems(items, (d2, w2) -> {
+                            String err = game.startWoodJob(v, fo, w2 == 1);
+                            if (err != null) toast(err);
+                            showVehiclePanel(v);
+                        }).show();
+                    } else if (task == Defs.FT_PLANT && fo.progress <= 0) {
+                        chooseSpecies(fo, sp -> {
+                            String err = game.startForestJob(v, fo, task, sp);
+                            if (err != null) toast(err);
+                            showVehiclePanel(v);
+                        });
+                    } else {
+                        String err = game.startForestJob(v, fo, task, fo.taskSpecies >= 0 ? fo.taskSpecies : Defs.SPRUCE);
+                        if (err != null) toast(err);
+                        showVehiclePanel(v);
+                    }
+                }).show();
+    }
+
+    private void chooseWoodAmount(final Forest fo) {
+        String[] items = {"🚛 Nur 1 Ladung", String.format(Locale.GERMANY, "🔁 Fahren bis der Polter leer ist (%.0f t)", fo.polter)};
+        double price = game.price(Defs.B_SAWMILL, Defs.WOOD + fo.woodSpecies);
+        new AlertDialog.Builder(this).setTitle(Defs.SPECIES_NAMES[fo.woodSpecies] + "holz zum Sägewerk – " + Game.euro(price) + "/t")
+                .setItems(items, (d, which) -> {
+                    Game.Vehicle v = game.findWoodVehicle(fo);
+                    if (v == null) {
+                        String reason = "Du brauchst einen Holz-Lkw, Forwarder oder Traktor mit Kurzholzanhänger/Rückewagen – und der muss frei sein.";
+                        for (Game.Vehicle c : game.vehicles) {
+                            String e = game.checkWood(c, fo);
+                            if (e != null && !e.contains("beschäftigt") && !e.contains("Dafür brauchst")) reason = e;
+                        }
+                        toast(reason);
+                        return;
+                    }
+                    String err = game.startWoodJob(v, fo, which == 1);
+                    if (err != null) toast(err);
+                    showForestPanel(fo);
+                }).show();
+    }
+
+    // ----------------------------------------------------------- Hof in 3D
+
+    private void showHof3D() {
+        hidePanel();
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        final AlertDialog[] dlg = new AlertDialog[1];
+        Hof3DView v3 = new Hof3DView(this, game);
+        v3.listener = v -> {
+            if (dlg[0] != null) dlg[0].dismiss();
+            map.centerOn(v.x, v.y);
+            showVehiclePanel(v);
+        };
+        box.addView(v3, new LinearLayout.LayoutParams(-1, dp(260)));
+        StringBuilder sb = new StringBuilder();
+        sb.append("📦 Lager: ");
+        boolean any = false;
+        for (int p = 0; p < Defs.PRODUCTS; p++) {
+            if (game.storage[p] < 0.05) continue;
+            if (any) sb.append(" • ");
+            sb.append(String.format(Locale.GERMANY, "%s %.1f t", Defs.PRODUCT_NAMES[p], game.storage[p]));
+            any = true;
+        }
+        if (!any) sb.append("leer");
+        sb.append(String.format(Locale.GERMANY, "\n🚜 %d Fahrzeuge, %d Geräte", game.vehicles.size(), game.tools.size()));
+        sb.append(String.format(Locale.GERMANY, "\n⚡ Strom gerade: %s pro Tag • heute bisher %s", Game.euro(game.energyRateNow()),
+                Game.euro(game.energyToday)));
+        TextView tv = text(sb.toString(), 14, 0xFF222222, false);
+        tv.setPadding(dp(16), dp(10), dp(16), 0);
+        box.addView(tv);
+        dlg[0] = new AlertDialog.Builder(this).setTitle("🏠 Dein Hof").setView(box)
+                .setPositiveButton("💰 Verkaufen", (d, w) -> chooseSell(null))
+                .setNeutralButton("🐾 Futter bringen", (d, w) -> chooseFeed(null, -1))
+                .setNegativeButton("📦 Lager & Preise", (d, w) -> showStorage())
+                .show();
+    }
+
+    private void showEnergyInfo() {
+        double pv = game.pvNow(), wn = game.windNow();
+        String sun = game.daylight() <= 0 ? "Nacht – keine Sonne" : game.snowCover > 0.3 ? "Schnee liegt auf den Modulen"
+                : game.weatherType == 0 ? "sonnig" : game.weatherType == 1 ? "bewölkt" : game.weatherType == 2 ? "Regen" : "Schneefall";
+        String wind = wn <= 0 ? "Flaute – das Windrad steht" : wn > 0.8 ? "kräftiger Wind" : wn > 0.4 ? "mäßiger Wind" : "schwacher Wind";
+        String msg = String.format(Locale.GERMANY,
+                "💨 Windräder: %d Stück, gerade %.0f %% Leistung (%s)\n\n☀ PV: %d Dächer + %.1f ha Solarpark, gerade %.0f %% (%s)\n\n"
+                        + "⚡ Bei dieser Leistung: %s pro Tag\nHeute bisher: %s\nGestern: %s",
+                game.winds.size(), wn * 100, wind, game.pvRoofs(), game.pvFieldHa(), pv * 100, sun,
+                Game.euro(game.energyRateNow()), Game.euro(game.energyToday), Game.euro(game.lastEnergy));
+        new AlertDialog.Builder(this).setTitle("⚡ Energie").setMessage(msg).setPositiveButton("OK", null).show();
     }
 
     // ----------------------------------------------------------------- Dialoge
@@ -879,7 +1271,9 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     private void showShop() {
         final String[] cats = {"🚜 Traktoren", "🌾 Mähdrescher", "🌽 Feldhäcksler", "🥔 Kartoffelroder", "⛏ Grubber",
                 "🌱 Sämaschinen", "🥔 Kartoffel-Legemaschinen", "🧪 Düngerstreuer", "🚛 Kipper", "✂ Mähwerke", "🌿 Ladewagen",
-                "🐄 Ställe", "🏗 Bauen: Windrad & PV", "🌾 Felder", "💸 Maschinen & Geräte verkaufen"};
+                "🐄 Ställe", "🏗 Bauen: Windrad & PV", "🌾 Felder", "💸 Maschinen & Geräte verkaufen",
+                "💧 Güllefässer", "💩 Miststreuer", "🌲 Forstmaschinen", "🌱 Pflanzmaschine", "🪵 Rückewagen", "🪵 Holzhacker",
+                "🚛 Kurzholzanhänger", "🌲 Wald kaufen"};
         new AlertDialog.Builder(this).setTitle("Kaufen/Verkaufen – Kontostand " + Game.euro(game.money))
                 .setItems(cats, (d, which) -> {
                     switch (which) {
@@ -901,7 +1295,18 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
                                     "Felder kaufst du direkt auf der Karte: Feld antippen → „Kaufen“.\nPreis: ca. "
                                             + Game.euro(Defs.FIELD_PRICE_HA) + " pro Hektar.").setPositiveButton("OK", null).show();
                             break;
-                        default: sellStuff();
+                        case 14: sellStuff(); break;
+                        case 15: shopModels(cats[15], Defs.K_TOOL, Defs.T_SLURRY); break;
+                        case 16: shopModels(cats[16], Defs.K_TOOL, Defs.T_MANURE); break;
+                        case 17: shopModels(cats[17], Defs.K_FORESTRY, -1); break;
+                        case 18: shopModels(cats[18], Defs.K_TOOL, Defs.T_TREEPLANT); break;
+                        case 19: shopModels(cats[19], Defs.K_TOOL, Defs.T_FWDTRAILER); break;
+                        case 20: shopModels(cats[20], Defs.K_TOOL, Defs.T_CHIPPER); break;
+                        case 21: shopModels(cats[21], Defs.K_TOOL, Defs.T_LOGTRAILER); break;
+                        default:
+                            new AlertDialog.Builder(this).setMessage(
+                                    "Wald kaufst du direkt auf der Karte: dunkelgrünes Waldstück (🌲 mit Nummer) antippen → „Kaufen“.\nPreis: ca. "
+                                            + Game.euro(Defs.FOREST_PRICE_HA) + " pro Hektar.").setPositiveButton("OK", null).show();
                     }
                 }).show();
     }
@@ -962,7 +1367,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         final List<Defs.Model> list = new ArrayList<>();
         for (Defs.Model m : Defs.MODELS) {
             if (m.kind != kind) continue;
-            if (kind != Defs.K_TRACTOR && m.sub != sub) continue;
+            if (kind != Defs.K_TRACTOR && kind != Defs.K_FORESTRY && m.sub != sub) continue;
             list.add(m);
         }
         List<String> texts = new ArrayList<>();
@@ -1074,15 +1479,16 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
     private void showStorage() {
         StringBuilder sb = new StringBuilder();
         sb.append("📦 Hoflager:\n");
-        for (int p = 0; p < 4; p++) {
+        for (int p = 0; p < Defs.PRODUCTS; p++) {
+            if (p >= Defs.WOOD) continue;
             sb.append(String.format(Locale.GERMANY, "• %s: %.1f t\n", Defs.PRODUCT_NAMES[p], game.storage[p]));
         }
         sb.append("\n💶 Preise heute (€/t):\n");
         if (game.bonusText() != null) sb.append(game.bonusText()).append("\n");
-        for (int p = 0; p < 4; p++) {
+        for (int p = 0; p < Defs.PRODUCTS; p++) {
             sb.append("• ").append(Defs.PRODUCT_NAMES[p]).append(": ");
             boolean first = true;
-            for (int b = 0; b < 3; b++) {
+            for (int b = 0; b < Defs.BUYERS; b++) {
                 if (!game.buys(b, p)) continue;
                 if (!first) sb.append(" | ");
                 sb.append(Defs.BUYER_NAMES[b]).append(" ").append(Game.euro(game.price(b, p)));
@@ -1102,6 +1508,8 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         if (!any) sb.append("keine\n");
         sb.append(String.format(Locale.GERMANY, "\n⚡ Energie gestern: %s  (%d PV-Dächer, %.1f ha Solarpark, %d Windräder)",
                 Game.euro(game.lastEnergy), game.pvRoofs(), game.pvFieldHa(), game.winds.size()));
+        sb.append(String.format(Locale.GERMANY, "\n⚡ Gerade: ☀ %.0f %% • 💨 %.0f %% → %s/Tag, heute bisher %s",
+                game.pvNow() * 100, game.windNow() * 100, Game.euro(game.energyRateNow()), Game.euro(game.energyToday)));
         sb.append("\n🌦 Wetter heute: ").append(game.weatherText());
         int owned = 0;
         double ha = 0;
@@ -1113,6 +1521,7 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
         new AlertDialog.Builder(this).setTitle("Lager & Preise").setMessage(sb.toString())
                 .setPositiveButton("OK", null)
                 .setNeutralButton("🐾 Futter bringen", (d, w) -> chooseFeed(null, -1))
+                .setNegativeButton("💰 Verkaufen", (d, w) -> chooseSell(null))
                 .show();
     }
 
@@ -1176,9 +1585,15 @@ public class MainActivity extends Activity implements Game.Listener, MapView.Tap
 
     private void showGameMenu() {
         String[] names = {"Einfach", "Mittel", "Hoch"};
-        String[] items = {"💾 Speichern", "🎨 Grafik: " + names[map.detail], "❓ Anleitung", "🏠 Karte zum Hof", "🚪 Speichern & zum Hauptmenü"};
+        String[] items = {"💾 Speichern", "🎨 Grafik: " + names[map.detail], "❓ Anleitung", "🏠 Karte zum Hof", "🚪 Speichern & zum Hauptmenü",
+                soundOn ? "🔊 Geräusche: an (tippen zum Ausschalten)" : "🔇 Geräusche: aus (tippen zum Einschalten)"};
         new AlertDialog.Builder(this).setTitle("Menü").setItems(items, (d, which) -> {
-            if (which == 0) save(true);
+            if (which == 5) {
+                soundOn = !soundOn;
+                getPreferences(MODE_PRIVATE).edit().putBoolean("sound", soundOn).apply();
+                if (!soundOn) sound.stop();
+                message(soundOn ? "🔊 Geräusche an" : "🔇 Geräusche aus");
+            } else if (which == 0) save(true);
             else if (which == 1) {
                 String[] opts = {"Einfach – für ältere Handys (schlichte Felder, kein Verkehr)",
                         "Mittel – mit Verkehr", "Hoch – mit Schatten, Staub und Tieren an den Ställen"};

@@ -14,7 +14,10 @@ public final class Defs {
     // ------------------------------------------------------------- Früchte
     public static final int GRASS = 0, WHEAT = 1, POTATO = 2, MAIZE = 3;
     public static final String[] CROP_NAMES = {"Wiese/Gras", "Weizen", "Kartoffeln", "Mais"};
-    public static final String[] PRODUCT_NAMES = {"Gras-Silage", "Weizen", "Kartoffeln", "Mais-Silage"};
+    /** Produkte: 0–3 Feldfrüchte, 4 Hackschnitzel, 5–7 Holz je Baumart */
+    public static final int PRODUCTS = 8, CHIPS = 4, WOOD = 5;
+    public static final String[] PRODUCT_NAMES = {"Gras-Silage", "Weizen", "Kartoffeln", "Mais-Silage", "Hackschnitzel",
+            "Fichtenholz", "Buchenholz", "Eichenholz"};
     /** Wachstumsdauer in Tagen */
     public static final double[] GROW_DAYS = {3, 7, 8, 8};
     /** Ertrag in t/ha (gedüngt; ungedüngt 80 %) */
@@ -22,22 +25,56 @@ public final class Defs {
     /** Saatgut €/ha */
     public static final double[] SEED_COST = {130, 110, 1300, 230};
     // ------------------------------------------------------------- Händler
-    public static final int B_LANDHANDEL = 0, B_MILL = 1, B_BIOGAS = 2;
-    public static final String[] BUYER_NAMES = {"Landhandel", "Mühle", "Biogasanlage"};
-    public static final String[] BUYER_TO = {"zum Landhandel", "zur Mühle", "zur Biogasanlage"};
-    /** Grundpreis €/t je Händler und Produkt {Gras, Weizen, Kartoffeln, Mais}; 0 = kauft nicht */
-    public static final double[][] BUY_BASE = {{0, 228, 190, 0}, {0, 240, 0, 0}, {40, 0, 0, 48}};
+    public static final int B_LANDHANDEL = 0, B_MILL = 1, B_BIOGAS = 2, B_SAWMILL = 3, BUYERS = 4;
+    public static final String[] BUYER_NAMES = {"Landhandel", "Mühle", "Biogasanlage", "Sägewerk"};
+    public static final String[] BUYER_TO = {"zum Landhandel", "zur Mühle", "zur Biogasanlage", "zum Sägewerk"};
+    /** Grundpreis €/t je Händler und Produkt; 0 = kauft nicht */
+    public static final double[][] BUY_BASE = {
+            {0, 228, 190, 0, 0, 0, 0, 0},
+            {0, 240, 0, 0, 0, 0, 0, 0},
+            {40, 0, 0, 48, 35, 0, 0, 0},
+            {0, 0, 0, 0, 0, 70, 95, 180}};
     /** Wie stark die Preise schwanken (Mühle stärker) */
-    public static final double[] BUY_VOLATILITY = {0.025, 0.045, 0.02};
+    public static final double[] BUY_VOLATILITY = {0.025, 0.045, 0.02, 0.03};
+
+    // --------------------------------------------------------------- Wald
+    public static final int SPRUCE = 0, BEECH = 1, OAK = 2;
+    public static final String[] SPECIES_NAMES = {"Fichte", "Buche", "Eiche"};
+    public static final String[] SPECIES_ICON = {"🌲", "🌳", "🌳"};
+    public static final double[] TREE_DAYS = {20, 30, 40};
+    /** Holz t/ha bei Hiebreife */
+    public static final double[] WOOD_YIELD = {120, 110, 100};
+    /** Setzlinge €/ha */
+    public static final double[] SEEDLING_COST = {2500, 3500, 5000};
+    /** Anteil Äste/Restholz für Hackschnitzel */
+    public static final double RESIDUE = 0.15;
+    public static final double FOREST_PRICE_HA = 25000;
+    public static final int FT_PLANT = 0, FT_FELL = 1, FT_FORWARD = 2, FT_CHIP = 3;
+    public static final String[] FT_NAMES = {"Pflanzen", "Fällen", "Rücken", "Hacken"};
+
+    // ------------------------------------------------------- Gülle & Mist
+    public static final int FERT_MINERAL = 0, FERT_SLURRY = 1, FERT_DUNG = 2;
+    public static final String[] FERT_NAMES = {"Kunstdünger", "Gülle", "Mist"};
+    /** Gülle m³/Tag und Mist t/Tag je Stall (Huhn, Kuh, Schwein, Schaf) */
+    public static final double[] S_SLURRY = {0, 2.0, 1.5, 0};
+    public static final double[] S_DUNG = {0.1, 0, 0, 0.2};
+    public static final double[] SLURRY_CAP = {0, 120, 90, 0};
+    public static final double[] DUNG_CAP = {10, 0, 0, 15};
+    /** Ausbringmenge pro ha */
+    public static final double APP_SLURRY = 25, APP_DUNG = 15;
     public static final double FERTILIZER_COST = 180; // €/ha
     public static final double FERTILIZE_UNTIL = 0.6; // Düngen bis 60 % Wachstum
 
     // ------------------------------------------------- Maschinen-Katalog
-    public static final int K_TRACTOR = 0, K_TOOL = 1, K_HARVESTER = 2;
+    public static final int K_TRACTOR = 0, K_TOOL = 1, K_HARVESTER = 2, K_FORESTRY = 3;
+    /** Forstmaschinen */
+    public static final int F_FELLER = 0, F_FORWARDER = 1, F_LOGTRUCK = 2;
+    public static final String[] F_KIND_NAMES = {"Prozessor/Harvester", "Forwarder", "Holz-Lkw"};
     /** Geräte-Arten */
-    public static final int T_GRUBBER = 0, T_SEEDER = 1, T_PLANTER = 2, T_SPREADER = 3, T_TRAILER = 4, T_MOWER = 5, T_LOADER = 6;
+    public static final int T_GRUBBER = 0, T_SEEDER = 1, T_PLANTER = 2, T_SPREADER = 3, T_TRAILER = 4, T_MOWER = 5, T_LOADER = 6,
+            T_SLURRY = 7, T_MANURE = 8, T_TREEPLANT = 9, T_FWDTRAILER = 10, T_CHIPPER = 11, T_LOGTRAILER = 12;
     public static final String[] T_KIND_NAMES = {"Grubber", "Sämaschine", "Kartoffel-Legemaschine", "Düngerstreuer", "Kipper",
-            "Mähwerk", "Ladewagen"};
+            "Mähwerk", "Ladewagen", "Güllefass", "Miststreuer", "Pflanzmaschine", "Rückewagen", "Holzhacker", "Kurzholzanhänger"};
     /** Erntemaschinen-Arten */
     public static final int H_COMBINE = 0, H_CHOPPER = 1, H_POTATO = 2;
     public static final String[] H_KIND_NAMES = {"Mähdrescher", "Feldhäcksler", "Kartoffelroder"};
@@ -88,6 +125,11 @@ public final class Defs {
         return new Model(mid++, K_HARVESTER, sub, 0, name, info, price, rate, rate2, tank, kmh / 3.6, diesel, len, wid, color);
     }
 
+    private static Model forestry(int sub, String name, String info, double price, double rate, double cap,
+                                  double kmh, double diesel, float len, float wid, int color) {
+        return new Model(mid++, K_FORESTRY, sub, 0, name, info, price, rate, 0, cap, kmh / 3.6, diesel, len, wid, color);
+    }
+
     private static String fmt(double v) {
         return (v == Math.floor(v) ? String.valueOf((int) v) : String.valueOf(v)).replace('.', ',');
     }
@@ -128,6 +170,26 @@ public final class Defs {
             // Ladewagen (gemähtes Gras einsammeln)
             tool(T_LOADER, "Ladewagen 25 m³", "25 m³ ≈ 6 t", 2, 28000, 2.5, 6, 7.0f, 2.5f),
             tool(T_LOADER, "Ladewagen 45 m³", "45 m³ ≈ 11 t", 4, 62000, 4.0, 11, 9.0f, 2.55f),
+            // Güllefässer
+            tool(T_SLURRY, "Güllefass 8 m³", "8 m³", 2, 18000, 4, 8, 6.0f, 2.5f),
+            tool(T_SLURRY, "Güllefass 14 m³", "14 m³", 3, 34000, 5, 14, 7.5f, 2.55f),
+            tool(T_SLURRY, "Güllefass 20 m³ Schleppschlauch", "20 m³, 15 m Schleppschlauch", 5, 68000, 7, 20, 8.5f, 2.55f),
+            // Miststreuer
+            tool(T_MANURE, "Miststreuer 6 t", "6 t", 2, 15000, 3, 6, 5.5f, 2.4f),
+            tool(T_MANURE, "Miststreuer 12 t", "12 t", 4, 32000, 4.5, 12, 7.0f, 2.55f),
+            // Wald-Geräte
+            tool(T_TREEPLANT, "Pflanzmaschine", "Setzlinge", 2, 22000, 0.6, 0, 3.0f, 2.4f),
+            tool(T_FWDTRAILER, "Rückewagen mit Kran 8 t", "8 t, Kran", 3, 38000, 30, 8, 6.5f, 2.4f),
+            tool(T_FWDTRAILER, "Rückewagen mit Kran 12 t", "12 t, Kran", 5, 62000, 40, 12, 7.5f, 2.5f),
+            tool(T_CHIPPER, "Holzhacker", "Hackschnitzel, 15 t Container", 4, 55000, 25, 15, 5.0f, 2.5f),
+            tool(T_LOGTRAILER, "Kurzholzanhänger 15 t", "15 t", 3, 26000, 0, 15, 8.0f, 2.5f),
+            tool(T_LOGTRAILER, "Kurzholzanhänger 25 t", "25 t", 5, 44000, 0, 25, 10.0f, 2.55f),
+            // Forstmaschinen
+            forestry(F_FELLER, "Prozessor Forstmax 1", "fällt 0,15 ha/h", 180000, 0.15, 0, 20, 45, 7.5f, 2.8f, 0xFFF9A825),
+            forestry(F_FELLER, "Harvester Forstmax 2", "fällt 0,3 ha/h", 380000, 0.3, 0, 25, 65, 9f, 3.0f, 0xFFFF8F00),
+            forestry(F_FORWARDER, "Forwarder Rücke 10", "rückt 10 t pro Fahrt", 160000, 40, 10, 25, 40, 10f, 2.8f, 0xFF558B2F),
+            forestry(F_FORWARDER, "Forwarder Rücke 16", "rückt 16 t pro Fahrt", 290000, 55, 16, 25, 55, 11.5f, 3.0f, 0xFF33691E),
+            forestry(F_LOGTRUCK, "Holz-Lkw", "fährt 26 t Holz zum Sägewerk", 140000, 0, 26, 60, 40, 16f, 2.55f, 0xFF455A64),
             // Mähdrescher
             harvester(H_COMBINE, "Mähdrescher Ähre 2000", 55000, 1.6, 0, 5, 20, 40, 7.5f, 3.2f, 0xFF2E7D32),
             harvester(H_COMBINE, "Mähdrescher Ähre 3500", 140000, 2.6, 0, 8, 22, 60, 8.5f, 3.5f, 0xFF388E3C),

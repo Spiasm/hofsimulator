@@ -41,7 +41,16 @@ public class MapView extends View {
     private final ScaleGestureDetector scaler;
     private final GestureDetector gestures;
 
-    public static final int[] PRODUCT_COLOR = {0xFF7CB342, 0xFFE0B040, 0xFFA1887F, 0xFF9CCC65};
+    public static final int[] PRODUCT_COLOR = {0xFF7CB342, 0xFFE0B040, 0xFFA1887F, 0xFF9CCC65, 0xFFD7B98E, 0xFF8D6E63, 0xFFA1887F, 0xFF6D4C41};
+
+    static int productColor(int p) {
+        if (p == -2) return 0xFF5D4037; // Gülle
+        if (p == -3) return 0xFF4E342E; // Mist
+        if (p < 0 || p >= PRODUCT_COLOR.length) return 0xFF9E9E9E;
+        return PRODUCT_COLOR[p];
+    }
+
+    public int selectedForest = -1;
 
     public MapView(Context c) {
         super(c);
@@ -154,6 +163,10 @@ public class MapView extends View {
                         p.setColor(0xFFB9AE96);
                         c.drawRect(l, tp, l + t, tp + t, p);
                         break;
+                    case World.FORESTLOT:
+                        p.setColor(0xFF4A5A32);
+                        c.drawRect(l, tp, l + t, tp + t, p);
+                        break;
                     case World.FIELD:
                         p.setColor(0xFF7A5634);
                         c.drawRect(l, tp, l + t, tp + t, p);
@@ -262,9 +275,15 @@ public class MapView extends View {
             drawBuilding(c, b);
         }
         drawHof(c);
-        for (int i = 0; i < 3; i++) if (visible(wo.trader[i], vl, vt, vr, vb)) drawTrader(c, wo.trader[i], i);
+        for (Forest fo : wo.forests) {
+            int[] fr = {fo.x, fo.y, fo.w, fo.h};
+            if (visible(fr, vl, vt, vr, vb)) drawForest(c, fo);
+        }
+        for (int i = 0; i < Defs.BUYERS; i++) if (visible(wo.trader[i], vl, vt, vr, vb)) drawTrader(c, wo.trader[i], i);
         for (int s = 0; s < Defs.STABLES; s++) if (visible(wo.stableLot[s], vl, vt, vr, vb)) drawStableLot(c, s);
 
+        updateWeatherShown();
+        drawSnowCover(c, vl, vt, vr, vb);
         // Weg des ausgewählten Fahrzeugs
         Game.Vehicle sel = game.vehicle(selectedVehicle);
         if (sel != null && sel.path != null && sel.pathIdx < sel.path.size()) {
@@ -308,8 +327,9 @@ public class MapView extends View {
         for (int[] wnd : game.winds) drawWind(c, wnd);
         c.restore();
 
+        drawWeather(c, w, h);
+        drawIndicators(c);
         drawLabels(c);
-        if (detail == 2 || game.fireField >= 0 || game.fireTruck != null || !game.winds.isEmpty()) postInvalidateOnAnimation();
     }
 
     private static boolean visible(int[] rect, float vl, float vt, float vr, float vb) {
@@ -566,8 +586,9 @@ public class MapView extends View {
     }
 
     private void roofPv(Canvas c, int[] rect) {
-        float l = rect[0] * Defs.TILE + 2, t = rect[1] * Defs.TILE + 2;
-        float rr = (rect[0] + rect[2]) * Defs.TILE - 2, b = (rect[1] + rect[3]) * Defs.TILE / 2f + t / 2f - 1;
+        // Südseite = untere Dachhälfte (Norden ist oben)
+        float l = rect[0] * Defs.TILE + 2, b = (rect[1] + rect[3]) * Defs.TILE - 2;
+        float rr = (rect[0] + rect[2]) * Defs.TILE - 2, t = (rect[1] + rect[3] / 2f) * Defs.TILE + 1;
         fill.setColor(0xFF1A237E);
         c.drawRect(l, t, rr, b, fill);
         stroke.setColor(0xFF5C6BC0);
@@ -612,6 +633,10 @@ public class MapView extends View {
             }
             fill.setColor(0xFF9E9E9E);
             c.drawRect(l + 5, b - 18, rr - 5, b - 6, fill);
+        } else if (type == Defs.B_SAWMILL) {
+            int[] hall = {rect[0] + 1, rect[1] + 1, 5, rect[3] - 2};
+            roof(c, hall, 0xFF6D4C41, false);
+            for (int k = 0; k < 4; k++) drawLogPile(c, l + 66 + (k % 2) * 16, t + 14 + (k / 2) * 22, 12, 6);
         } else if (type == Defs.B_MILL) {
             int[] mill = {rect[0] + 1, rect[1] + 1, 3, rect[3] - 2};
             roof(c, mill, 0xFF8D6E63, false);
@@ -783,7 +808,7 @@ public class MapView extends View {
         c.drawCircle(x + 3, y + 3, 3.5f, fill);
         fill.setColor(0xFFECEFF1);
         c.drawCircle(x, y, 3.5f, fill);
-        float angle = (float) (now() * 60 * game.weatherWind);
+        float angle = (float) (now() * 90 * game.windNow());
         c.save();
         c.translate(x, y);
         c.rotate(angle);
@@ -842,8 +867,19 @@ public class MapView extends View {
         laneShift(t.x, t.y, t.heading, shift);
         if (t.state == 1 && game.fireField >= 0) {
             // Wasserstrahl
-            double a = Math.atan2(game.fireY - t.y, game.fireX - t.x);
-            float ex = game.fireX - (float) Math.cos(a) * game.fireR, ey = game.fireY - (float) Math.sin(a) * game.fireR;
+            Field ff = game.world.fields.get(game.fireField);
+            float fl = ff.x * Defs.TILE + 2, ft = ff.y * Defs.TILE + 2, fr = (ff.x + ff.w) * Defs.TILE - 2, fb = (ff.y + ff.h) * Defs.TILE - 2;
+            double d = Math.hypot(t.x - game.fireX, t.y - game.fireY);
+            float ex, ey;
+            if (d > game.fireR) {
+                ex = game.fireX + (float) ((t.x - game.fireX) / d * game.fireR);
+                ey = game.fireY + (float) ((t.y - game.fireY) / d * game.fireR);
+            } else {
+                ex = t.x;
+                ey = t.y;
+            }
+            ex = Math.max(fl, Math.min(fr, ex));
+            ey = Math.max(ft, Math.min(fb, ey));
             stroke.setColor(0xAA4FC3F7);
             stroke.setStrokeWidth(1.6f);
             float wob = (float) Math.sin(now() * 6) * 4;
@@ -883,7 +919,8 @@ public class MapView extends View {
         int n = Math.max(8, (int) (rad * 2 * Math.PI / 3));
         for (int i = 0; i < n; i++) {
             double a = i * 2 * Math.PI / n;
-            float flick = (float) (0.6 + 0.4 * Math.sin(tm * 9 + i * 1.7));
+            float flick = (float) (0.6 + 0.4 * Math.sin(tm * 9 + i * 1.7)) * game.firePower;
+            if (flick < 0.05f) continue;
             float fx = game.fireX + (float) Math.cos(a) * rad, fy = game.fireY + (float) Math.sin(a) * rad;
             fill.setColor(0xCCFF6D00);
             c.drawCircle(fx, fy, 2.2f * flick + 0.6f, fill);
@@ -897,7 +934,7 @@ public class MapView extends View {
                 float age = (tm * 0.35f + i / 10f) % 1f;
                 double a = i * 2.3;
                 float sx0 = game.fireX + (float) Math.cos(a) * rad * 0.8f, sy0 = game.fireY + (float) Math.sin(a) * rad * 0.8f;
-                fill.setColor(((int) (110 * (1 - age)) << 24) | 0x555555);
+                fill.setColor(((int) (110 * (1 - age) * (0.3f + 0.7f * game.firePower)) << 24) | 0x555555);
                 c.drawCircle(sx0 + age * 60, sy0 - age * 25, 4 + age * 16, fill);
             }
         }
@@ -927,6 +964,275 @@ public class MapView extends View {
             c.drawCircle(d.x + f * 4, d.y - f * 2, d.size * (1 + f * 2), fill);
         }
     }
+    // ------------------------------------------------------------ Wald
+
+    private void drawForest(Canvas c, Forest fo) {
+        float l = fo.x * Defs.TILE, t = fo.y * Defs.TILE, rr = (fo.x + fo.w) * Defs.TILE, b = (fo.y + fo.h) * Defs.TILE;
+        fill.setColor(fo.state == Forest.GROWING ? 0xFF3E5A2A : 0xFF6B5A3A);
+        c.drawRect(l, t, rr, b, fill);
+        boolean felling = fo.task == Defs.FT_FELL && fo.progress > 0;
+        int fellLane = felling ? (int) Math.floor(fo.progress * fo.h) : -1;
+        double fellFrac = felling ? fo.progress * fo.h - fellLane : 0;
+        Random rnd = new Random(fo.index * 977L);
+        boolean simple = detail == 0;
+        for (int j = 0; j < fo.h; j++) {
+            for (int i = 0; i < fo.w; i++) {
+                for (int k = 0; k < (simple ? 1 : 2); k++) {
+                    float x = l + (i + 0.25f + rnd.nextFloat() * 0.5f) * Defs.TILE;
+                    float y = t + (j + 0.25f + rnd.nextFloat() * 0.5f) * Defs.TILE;
+                    boolean felled = fo.state != Forest.GROWING;
+                    if (felling) {
+                        if (j < fellLane) felled = true;
+                        else if (j == fellLane) {
+                            float fx = (x - l) / (rr - l);
+                            felled = (j % 2 == 0) ? fx < fellFrac : fx > 1 - fellFrac;
+                        }
+                    }
+                    if (felled) {
+                        // Baumstumpf
+                        fill.setColor(0xFFBCA27A);
+                        c.drawCircle(x, y, 0.8f, fill);
+                        continue;
+                    }
+                    float g = (float) Math.max(0.12, Math.min(1, fo.growth));
+                    float rad = Defs.TILE * 0.35f * g + 0.6f;
+                    int col = fo.species == Defs.SPRUCE ? 0xFF2E5D32 : fo.species == Defs.BEECH ? 0xFF558B2F : 0xFF6B8E23;
+                    if (!simple) {
+                        fill.setColor(0x44000000);
+                        c.drawCircle(x + rad * 0.3f, y + rad * 0.3f, rad, fill);
+                    }
+                    fill.setColor(col);
+                    c.drawCircle(x, y, rad, fill);
+                    if (!simple && fo.species == Defs.SPRUCE) {
+                        fill.setColor(mix(col, 0xFF000000, 0.25));
+                        c.drawCircle(x, y, rad * 0.45f, fill);
+                    } else if (!simple) {
+                        fill.setColor(mix(col, 0xFFFFFFFF, 0.15));
+                        c.drawCircle(x - rad * 0.25f, y - rad * 0.25f, rad * 0.5f, fill);
+                    }
+                }
+            }
+        }
+        // liegendes Holz im Bestand
+        if (fo.logs > 0.5 && !simple) {
+            int piles = (int) Math.min(30, fo.logs / 8);
+            Random pr = new Random(fo.index * 31L);
+            for (int k = 0; k < piles; k++) {
+                float x = l + 5 + pr.nextFloat() * (rr - l - 10), y = t + 5 + pr.nextFloat() * (b - t - 10);
+                drawLogPile(c, x, y, 4, 2.2f);
+            }
+        }
+        // Polter an der Straße
+        if (fo.polter > 0.5 && fo.gate != null) {
+            float gx = (fo.gate[0] + 0.5f) * Defs.TILE, gy = (fo.gate[1] + 0.5f) * Defs.TILE;
+            float px = Math.max(l + 4, Math.min(rr - 4, gx)), py = Math.max(t + 3, Math.min(b - 3, gy));
+            float size = (float) Math.min(9, 3 + fo.polter / 15);
+            drawLogPile(c, px, py, size, size * 0.6f);
+        }
+        stroke.setColor(fo.owned ? 0xFFFFEB3B : 0x66000000);
+        stroke.setStrokeWidth(fo.owned ? Math.max(1.2f, 3f / scale) : Math.max(0.8f, 1.5f / scale));
+        c.drawRect(l, t, rr, b, stroke);
+        if (fo.index == selectedForest) {
+            stroke.setColor(0xFFFFFFFF);
+            stroke.setStrokeWidth(4f / scale);
+            c.drawRect(l + 2 / scale, t + 2 / scale, rr - 2 / scale, b - 2 / scale, stroke);
+        }
+    }
+
+    private void drawLogPile(Canvas c, float x, float y, float len, float wid) {
+        fill.setColor(0xFF8D6E63);
+        c.drawRect(x - len / 2, y - wid / 2, x + len / 2, y + wid / 2, fill);
+        fill.setColor(0xFFD7B98E);
+        int n = Math.max(2, (int) (wid / 0.6f));
+        for (int k = 0; k < n; k++) c.drawCircle(x + len / 2, y - wid / 2 + (k + 0.5f) * wid / n, wid / n * 0.45f, fill);
+    }
+
+    // ------------------------------------------------------------ Wetter
+
+    private float rainShown, snowShown, cloudShown, snowCoverShown;
+
+    private void updateWeatherShown() {
+        float k = Math.min(1, frameDt * 0.5f);
+        int wt = game.weatherType;
+        rainShown += ((wt == 2 ? 1 : 0) - rainShown) * k;
+        snowShown += ((wt == 3 ? 1 : 0) - snowShown) * k;
+        cloudShown += ((wt == 0 ? 0.15f : wt == 1 ? 0.6f : 1f) - cloudShown) * k;
+        snowCoverShown += ((float) game.snowCover - snowCoverShown) * k * 0.5f;
+    }
+
+    /** Schnee auf dem Boden (vor den Fahrzeugen gezeichnet, in Weltkoordinaten) */
+    private void drawSnowCover(Canvas c, float vl, float vt, float vr, float vb) {
+        if (snowCoverShown < 0.02f) return;
+        fill.setColor(((int) (170 * snowCoverShown) << 24) | 0xF4F8FB);
+        c.drawRect(vl, vt, vr, vb, fill);
+    }
+
+    /** Wolkenschatten, Regen, Schnee (in Bildschirmkoordinaten) */
+    private void drawWeather(Canvas c, float w, float h) {
+        float tm = now();
+        // Tönung
+        int tint = (int) (cloudShown * 35 + rainShown * 35);
+        if (tint > 0) {
+            fill.setColor((tint << 24) | 0x37474F);
+            c.drawRect(0, 0, w, h, fill);
+        }
+        if (detail == 0) return;
+        // ziehende Wolkenschatten
+        int clouds = (int) (2 + cloudShown * 5);
+        for (int i = 0; i < clouds; i++) {
+            float span = Defs.MAP * Defs.TILE + 600;
+            float wx = ((i * 397f + tm * 6f * (float) (0.5 + game.weatherWind)) % span) - 300;
+            float wy = (i * 613f) % (Defs.MAP * Defs.TILE);
+            float sx0 = sx(wx), sy0 = sy(wy);
+            float rad = (120 + (i % 3) * 60) * scale;
+            if (sx0 < -rad * 2 || sx0 > w + rad * 2 || sy0 < -rad || sy0 > h + rad) continue;
+            fill.setColor(((int) (25 + cloudShown * 25) << 24));
+            r.set(sx0 - rad * 1.6f, sy0 - rad * 0.8f, sx0 + rad * 1.6f, sy0 + rad * 0.8f);
+            c.drawOval(r, fill);
+        }
+        // Regen
+        if (rainShown > 0.05f) {
+            int n = (int) ((detail == 2 ? 160 : 80) * rainShown);
+            stroke.setColor(0x99B3E5FC);
+            stroke.setStrokeWidth(2f);
+            for (int i = 0; i < n; i++) {
+                float px = (i * 73.3f + tm * 90) % (w + 100) - 50;
+                float py = (i * 151.7f + tm * 900 + i * 37) % (h + 60) - 30;
+                c.drawLine(px, py, px - 8, py + 26, stroke);
+            }
+        }
+        // Schnee
+        if (snowShown > 0.05f) {
+            int n = (int) ((detail == 2 ? 140 : 70) * snowShown);
+            fill.setColor(0xEEFFFFFF);
+            for (int i = 0; i < n; i++) {
+                float px = (i * 61.7f + (float) Math.sin(tm + i) * 20 + tm * 15) % (w + 40) - 20;
+                float py = (i * 97.3f + tm * 60 + i * 13) % (h + 40) - 20;
+                c.drawCircle(px, py, 2.5f + (i % 3), fill);
+            }
+        }
+    }
+
+    // ------------------------------------------------------- Anzeigen
+
+    private void bar(Canvas c, float cx, float cy, float pct, String txt, int color) {
+        float bw = 70, bh = 10;
+        fill.setColor(0xAA000000);
+        r.set(cx - bw / 2 - 2, cy - bh / 2 - 2, cx + bw / 2 + 2, cy + bh / 2 + 2);
+        c.drawRoundRect(r, 4, 4, fill);
+        fill.setColor(color);
+        r.set(cx - bw / 2, cy - bh / 2, cx - bw / 2 + bw * Math.max(0, Math.min(1, pct)), cy + bh / 2);
+        c.drawRoundRect(r, 3, 3, fill);
+        text.setTextSize(24);
+        text.setColor(0xFFFFFFFF);
+        c.drawText(txt, cx, cy - bh - 4, text);
+    }
+
+    private static int fillColor(double pct) {
+        if (pct >= 0.999) return 0xFFE53935;
+        if (pct >= 0.8) return 0xFFFB8C00;
+        if (pct >= 0.6) return 0xFFFDD835;
+        return 0xFF66BB6A;
+    }
+
+    private static int powerColor(double pct) {
+        if (pct < 0.05) return 0xFF9E9E9E;
+        if (pct < 0.4) return 0xFFFDD835;
+        return 0xFF66BB6A;
+    }
+
+    /** Füllstand über Fahrzeugen und Leistung von PV/Windrad */
+    private void drawIndicators(Canvas c) {
+        for (Game.Vehicle v : game.vehicles) {
+            double cap = game.capOf(v);
+            if (cap <= 0) continue;
+            boolean show = v.load > 0.05 || (v.isHarvester() && v.working());
+            if (!show) continue;
+            float px = sx(v.x), py = sy(v.y) - Math.max(34, 7 * scale);
+            if (px < -50 || py < -50 || px > getWidth() + 50 || py > getHeight() + 50) continue;
+            double pct = v.load / cap;
+            String icon = v.loadProduct == -2 ? "💧" : v.loadProduct == -3 ? "💩" : v.loadProduct >= Defs.WOOD ? "🪵"
+                    : v.loadProduct == Defs.CHIPS ? "🪵" : "🌾";
+            bar(c, px, py, (float) pct, icon + " " + Math.round(pct * 100) + " %", fillColor(pct));
+        }
+        if (scale < 0.9f) return;
+        float wnd = (float) game.windNow(), pv = (float) game.pvNow();
+        for (int[] w : game.winds) {
+            float px = sx((w[0] + 0.5f) * Defs.TILE), py = sy((w[1] + 0.5f) * Defs.TILE) - 45 * scale * 0.5f - 20;
+            bar(c, px, py, wnd, "💨 " + Math.round(wnd * 100) + " %", powerColor(wnd));
+        }
+        for (Field f : game.world.fields) {
+            if (!f.pv) continue;
+            float px = sx((f.x + f.w / 2f) * Defs.TILE), py = sy((f.y + f.h / 2f) * Defs.TILE) + 30;
+            bar(c, px, py, pv, "☀ " + Math.round(pv * 100) + " %", powerColor(pv));
+        }
+        if (scale < 1.5f) return;
+        World w = game.world;
+        if (game.pvHouse) pvBar(c, w.house, pv);
+        if (game.pvHall) pvBar(c, w.hall, pv);
+        for (int s = 0; s < Defs.STABLES; s++) {
+            if (game.stables[s] && game.pvStable[s]) pvBar(c, new int[]{w.stableLot[s][0], w.stableLot[s][1], w.stableLot[s][2], 4}, pv);
+        }
+    }
+
+    private void pvBar(Canvas c, int[] rect, float pv) {
+        float px = sx((rect[0] + rect[2] / 2f) * Defs.TILE), py = sy((rect[1] + rect[3]) * Defs.TILE) + 14;
+        bar(c, px, py, pv, "☀ " + Math.round(pv * 100) + " %", powerColor(pv));
+    }
+
+    // ------------------------------------------------- weitere Maschinen
+
+    private void drawForestry(Canvas c, Game.Vehicle v, float L, float W, int color) {
+        float hl = L / 2, hw = W / 2;
+        Defs.Model m = v.m();
+        // Räder (Bogie)
+        for (float x : new float[]{-hl * 0.75f, -hl * 0.45f, hl * 0.35f, hl * 0.65f}) {
+            wheel(c, x - 0.6f, x + 0.6f, -hw - 0.25f, -hw + 0.45f);
+            wheel(c, x - 0.6f, x + 0.6f, hw - 0.45f, hw + 0.25f);
+        }
+        if (m.sub == Defs.F_LOGTRUCK) {
+            fill.setColor(color);
+            c.drawRect(hl - 2.6f, -hw, hl, hw, fill);
+            fill.setColor(0xFF90CAF9);
+            c.drawRect(hl - 0.9f, -hw * 0.8f, hl - 0.5f, hw * 0.8f, fill);
+            fill.setColor(0xFF616161);
+            c.drawRect(-hl, -hw * 0.9f, hl - 2.9f, hw * 0.9f, fill);
+            if (v.load > 0) logLoad(c, -hl + 0.3f, hl - 3.2f, hw * 0.8f, (float) (v.load / m.cap));
+            return;
+        }
+        fill.setColor(color);
+        r.set(-hl, -hw * 0.8f, hl, hw * 0.8f);
+        c.drawRoundRect(r, 0.5f, 0.5f, fill);
+        fill.setColor(0xFFECEFF1);
+        r.set(hl * 0.25f, -hw * 0.6f, hl * 0.75f, hw * 0.6f);
+        c.drawRoundRect(r, 0.3f, 0.3f, fill);
+        fill.setColor(0xFF90CAF9);
+        c.drawRect(hl * 0.62f, -hw * 0.5f, hl * 0.72f, hw * 0.5f, fill);
+        stroke.setColor(0xFF424242);
+        stroke.setStrokeWidth(0.35f);
+        if (m.sub == Defs.F_FELLER) {
+            // Kran mit Aggregat vorne
+            float arm = (float) Math.sin(now() * 1.5 + v.id) * 1.5f;
+            c.drawLine(hl * 0.2f, 0, hl + 3f, arm, stroke);
+            fill.setColor(0xFFFFD600);
+            c.drawRect(hl + 2.4f, arm - 0.8f, hl + 3.6f, arm + 0.8f, fill);
+        } else {
+            // Rungenkorb hinten mit Holz
+            fill.setColor(0xFF616161);
+            c.drawRect(-hl, -hw * 0.9f, hl * 0.1f, hw * 0.9f, fill);
+            if (v.load > 0) logLoad(c, -hl + 0.2f, hl * 0.05f, hw * 0.8f, (float) (v.load / m.cap));
+            c.drawLine(hl * 0.15f, 0, -hl * 0.4f, hw + 1.2f, stroke);
+        }
+    }
+
+    private void logLoad(Canvas c, float x0, float x1, float hw, float f) {
+        f = Math.max(0.15f, Math.min(1, f));
+        fill.setColor(0xFF8D6E63);
+        c.drawRect(x0, -hw * f, x1, hw * f, fill);
+        fill.setColor(0xFFD7B98E);
+        for (float y = -hw * f + 0.3f; y < hw * f; y += 0.6f) c.drawCircle(x1, y, 0.28f, fill);
+    }
+
     // ---------------------------------------------------------- Fahrzeuge
 
     private void drawVehicle(Canvas c, Game.Vehicle v, boolean selected) {
@@ -957,6 +1263,8 @@ public class MapView extends View {
         if (v.isTractor()) {
             if (tool != null) drawTool(c, tool.m(), -len / 2, v);
             drawTractor(c, len, wid, m.color);
+        } else if (v.isForestry()) {
+            drawForestry(c, v, len, wid, m.color);
         } else if (m.sub == Defs.H_COMBINE) {
             drawCombine(c, len, wid, v, m.color);
         } else if (m.sub == Defs.H_CHOPPER) {
@@ -1053,9 +1361,85 @@ public class MapView extends View {
                 c.drawRect(b0 - 0.8f, -hw - 0.1f, b0 - 0.2f, hw + 0.1f, fill); // Pick-up
                 if (v != null && v.load > 0 && v.loadProduct >= 0) {
                     float f = (float) Math.min(1, v.load / m.cap);
-                    fill.setColor(PRODUCT_COLOR[v.loadProduct]);
+                    fill.setColor(productColor(v.loadProduct));
                     r.set(b1 + 0.2f, -(hw - 0.2f) * f, b0 - 0.8f, (hw - 0.2f) * f);
                     c.drawRoundRect(r, 0.8f, 0.8f, fill);
+                }
+                break;
+            }
+            case Defs.T_SLURRY: {
+                wheel(c, b1 + len * 0.3f - 0.6f, b1 + len * 0.3f + 0.6f, -hw - 0.25f, -hw + 0.35f);
+                wheel(c, b1 + len * 0.3f - 0.6f, b1 + len * 0.3f + 0.6f, hw - 0.35f, hw + 0.25f);
+                fill.setColor(0xFF2E7D32);
+                r.set(b1 + 0.6f, -hw + 0.1f, b0, hw - 0.1f);
+                c.drawRoundRect(r, hw, hw, fill);
+                fill.setColor(0xFF43A047);
+                r.set(b1 + 1.0f, -hw * 0.5f, b0 - 0.4f, -hw * 0.1f);
+                c.drawRoundRect(r, 0.4f, 0.4f, fill);
+                // Verteiler / Schleppschlauch hinten
+                fill.setColor(0xFF424242);
+                float boom = m.cap >= 20 ? 7.5f : 3f;
+                c.drawRect(b1 - 0.1f, -boom, b1 + 0.5f, boom, fill);
+                if (v != null && v.working()) {
+                    fill.setColor(0x885D4037);
+                    c.drawRect(b1 - 1.6f, -boom, b1 - 0.1f, boom, fill);
+                }
+                break;
+            }
+            case Defs.T_MANURE: {
+                wheel(c, b1 + len * 0.35f - 0.6f, b1 + len * 0.35f + 0.6f, -hw - 0.2f, -hw + 0.3f);
+                wheel(c, b1 + len * 0.35f - 0.6f, b1 + len * 0.35f + 0.6f, hw - 0.3f, hw + 0.2f);
+                fill.setColor(0xFFC62828);
+                c.drawRect(b1 + 0.6f, -hw, b0, hw, fill);
+                fill.setColor(0xFF8E0000);
+                c.drawRect(b1 + 0.8f, -hw + 0.2f, b0 - 0.2f, hw - 0.2f, fill);
+                if (v != null && v.load > 0) {
+                    fill.setColor(productColor(-3));
+                    float f = (float) Math.min(1, v.load / m.cap);
+                    r.set(b1 + 0.8f, -(hw - 0.2f) * f, b0 - 0.2f, (hw - 0.2f) * f);
+                    c.drawRoundRect(r, 0.6f, 0.6f, fill);
+                }
+                fill.setColor(0xFF616161);
+                c.drawCircle(b1 + 0.4f, -hw * 0.5f, 0.5f, fill);
+                c.drawCircle(b1 + 0.4f, hw * 0.5f, 0.5f, fill);
+                break;
+            }
+            case Defs.T_TREEPLANT: {
+                fill.setColor(0xFF795548);
+                c.drawRect(b1, -hw, b0, hw, fill);
+                fill.setColor(0xFF66BB6A);
+                for (float y = -hw + 0.4f; y < hw; y += 0.7f) c.drawCircle(b1 + len * 0.5f, y, 0.3f, fill);
+                break;
+            }
+            case Defs.T_CHIPPER: {
+                wheel(c, b1 + len * 0.4f - 0.6f, b1 + len * 0.4f + 0.6f, -hw - 0.2f, -hw + 0.3f);
+                wheel(c, b1 + len * 0.4f - 0.6f, b1 + len * 0.4f + 0.6f, hw - 0.3f, hw + 0.2f);
+                fill.setColor(0xFFF57C00);
+                c.drawRect(b1, -hw, b0, hw, fill);
+                fill.setColor(0xFF424242);
+                c.drawRect(b1 + len * 0.55f, -hw * 0.5f, b0 - 0.3f, hw * 0.5f, fill);
+                stroke.setColor(0xFF616161);
+                stroke.setStrokeWidth(0.4f);
+                c.drawLine(b1 + len * 0.5f, 0, b1 + 0.3f, hw + 1.2f, stroke);
+                break;
+            }
+            case Defs.T_FWDTRAILER:
+            case Defs.T_LOGTRAILER: {
+                int axles = m.cap >= 20 ? 3 : 2;
+                for (int a = 0; a < axles; a++) {
+                    float ax = b1 + len * 0.25f + a * 1.1f;
+                    wheel(c, ax - 0.5f, ax + 0.5f, -hw - 0.2f, -hw + 0.3f);
+                    wheel(c, ax - 0.5f, ax + 0.5f, hw - 0.3f, hw + 0.2f);
+                }
+                fill.setColor(0xFF616161);
+                c.drawRect(b1, -hw * 0.9f, b0, hw * 0.9f, fill);
+                fill.setColor(0xFF37474F);
+                for (float x = b1 + 0.3f; x < b0; x += len / 4) c.drawRect(x, -hw, x + 0.25f, hw, fill);
+                if (v != null && v.load > 0) logLoad(c, b1 + 0.2f, b0 - 0.2f, hw * 0.8f, (float) (v.load / m.cap));
+                if (m.sub == Defs.T_FWDTRAILER) {
+                    stroke.setColor(0xFF424242);
+                    stroke.setStrokeWidth(0.35f);
+                    c.drawLine(b0 - 0.3f, 0, b0 - len * 0.6f, hw + 1.5f, stroke);
                 }
                 break;
             }
@@ -1072,7 +1456,7 @@ public class MapView extends View {
                 c.drawRect(b1 + 0.2f, -hw + 0.2f, b0 - 0.2f, hw - 0.2f, fill);
                 if (v != null && v.load > 0 && v.loadProduct >= 0) {
                     float f = (float) Math.min(1, v.load / m.cap);
-                    fill.setColor(PRODUCT_COLOR[v.loadProduct]);
+                    fill.setColor(productColor(v.loadProduct));
                     r.set(b1 + 0.2f, -(hw - 0.2f) * f, b0 - 0.2f, (hw - 0.2f) * f);
                     c.drawRoundRect(r, 0.8f, 0.8f, fill);
                 }
@@ -1084,7 +1468,7 @@ public class MapView extends View {
         double cap = v.m().cap;
         if (v.load <= 0 || cap <= 0 || v.loadProduct < 0) return;
         float f = (float) Math.min(1, v.load / cap);
-        fill.setColor(PRODUCT_COLOR[v.loadProduct]);
+        fill.setColor(productColor(v.loadProduct));
         r.set(x0, -hw * f, x1, hw * f);
         c.drawRoundRect(r, 0.5f, 0.5f, fill);
     }
@@ -1168,9 +1552,16 @@ public class MapView extends View {
             text.setColor(f.owned ? 0xFFFFEB3B : 0xDDFFFFFF);
             c.drawText((f.owned ? "★ " : "") + f.number + (game.fireField == f.index ? " 🔥" : ""), cx, cy + ts * 0.35f, text);
         }
+        for (Forest fo : w.forests) {
+            float cx = sx((fo.x + fo.w / 2f) * Defs.TILE), cy = sy((fo.y + fo.h / 2f) * Defs.TILE);
+            if (cx < -100 || cy < -100 || cx > getWidth() + 100 || cy > getHeight() + 100) continue;
+            text.setColor(fo.owned ? 0xFFFFEB3B : 0xDDFFFFFF);
+            c.drawText((fo.owned ? "★ " : "") + "🌲" + fo.number, cx, cy + ts * 0.35f, text);
+        }
         text.setColor(0xFFFFFFFF);
         text.setTextSize(ts * 0.8f);
         label(c, w.hof, "🏠 Dein Hof");
+        label(c, w.trader[Defs.B_SAWMILL], "🪵 Sägewerk");
         label(c, w.trader[Defs.B_LANDHANDEL], "🌾 Landhandel");
         label(c, w.trader[Defs.B_MILL], "🏭 Mühle");
         label(c, w.trader[Defs.B_BIOGAS], "⚡ Biogas");
@@ -1217,7 +1608,7 @@ public class MapView extends View {
             len = m.len + 0.6f;
             wid = m.wid;
         } else {
-            len = m.len + (tool != null ? tool.len + 0.6f : 0) + (m.kind == Defs.K_HARVESTER ? 2f : 0);
+            len = m.len + (tool != null ? tool.len + 0.6f : 0) + (m.kind == Defs.K_HARVESTER ? 2f : m.kind == Defs.K_FORESTRY ? 4f : 0);
             wid = Math.max(m.wid, tool != null ? tool.wid : 0);
             if (m.kind == Defs.K_HARVESTER && m.sub != Defs.H_POTATO) wid = Math.max(wid, m.wid * 1.9f + 3f);
         }
@@ -1237,7 +1628,8 @@ public class MapView extends View {
             Game.Vehicle dummy = new Game.Vehicle();
             dummy.model = m.id;
             c.translate(-1f, 0);
-            if (m.sub == Defs.H_COMBINE) drawCombine(c, m.len, m.wid, dummy, m.color);
+            if (m.kind == Defs.K_FORESTRY) drawForestry(c, dummy, m.len, m.wid, m.color);
+            else if (m.sub == Defs.H_COMBINE) drawCombine(c, m.len, m.wid, dummy, m.color);
             else if (m.sub == Defs.H_CHOPPER) drawChopper(c, m.len, m.wid, dummy, m.color);
             else drawPotatoHarvester(c, m.len, m.wid, dummy, m.color);
         }
